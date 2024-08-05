@@ -1,3 +1,25 @@
+#  / \__
+ (    @\____
+ /         O
+/   (_____/
+/_____/ U
+  / \__
+ (    @\____
+ /         O
+/   (_____/
+/_____/ U
+  / \__
+ (    @\____
+ /         O
+/   (_____/
+/_____/ U
+
+
+
+
+
+
+
 import tkinter as tk
 from tkinter import messagebox
 import MetaTrader5 as mt5
