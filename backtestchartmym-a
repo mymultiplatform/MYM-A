@@ -6,7 +6,6 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 import tkinter as tk
-from datetime import timedelta
 
 def main():
     # Initialize and connect to MT5 to fetch historical data
@@ -24,19 +23,66 @@ def main():
         raise Exception("Failed to connect to MetaTrader 5")
 
 def perform_backtest():
-    # Fetch data, train the model, and run backtest
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_H4  # 4-hour time frame for the simulation
     days = 600
     data = fetch_historical_data(symbol, timeframe, days)
     scaled_data, scaler = preprocess_data(data)
     model = train_lstm_model(scaled_data)
-    future_hours = 24 * 30 / 4  # Simulating a month with 4-hour intervals
-    predicted_prices = predict_future(model, scaled_data, int(future_hours))
-    predicted_prices = scaler.inverse_transform(np.array(predicted_prices).reshape(-1, 1))
     
-    # Backtest with simulated trades and plot the results
-    backtest_and_plot(data, predicted_prices)
+    time_step = 60
+    balance = 10000
+    lot_size = 0.1
+    trade_log = []
+    open_trade = None
+    
+    # Filter the data for the period of June 1, 2024, to July 1, 2024
+    data_subset = data[(data['time'] >= '2024-06-01') & (data['time'] <= '2024-07-01')].copy()
+
+    for i in range(time_step, len(data_subset) - 1):
+        input_seq = scaled_data[i-time_step:i].reshape((1, time_step, 1))
+        predicted_price = model.predict(input_seq)[0][0]
+        predicted_price = scaler.inverse_transform([[predicted_price]])[0][0]
+        
+        current_price = data_subset['close'].iloc[i]
+        
+        if open_trade is None:
+            # Decision to open a trade
+            if predicted_price > current_price:
+                # Open a buy trade
+                open_trade = {'time': data_subset['time'].iloc[i], 'type': 'Buy', 'entry_price': current_price}
+            elif predicted_price < current_price:
+                # Open a sell trade
+                open_trade = {'time': data_subset['time'].iloc[i], 'type': 'Sell', 'entry_price': current_price}
+
+        if open_trade is not None:
+            # Decision to close a trade
+            next_price = data_subset['close'].iloc[i+1]
+            if open_trade['type'] == 'Buy' and next_price > open_trade['entry_price'] + 0.1 / lot_size:
+                balance += lot_size * (next_price - open_trade['entry_price']) * 100000
+                trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data_subset['time'].iloc[i+1]})
+                open_trade = None
+            elif open_trade['type'] == 'Sell' and next_price < open_trade['entry_price'] - 0.1 / lot_size:
+                balance += lot_size * (open_trade['entry_price'] - next_price) * 100000
+                trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data_subset['time'].iloc[i+1]})
+                open_trade = None
+
+    # Plotting the results
+    plt.figure(figsize=(9, 9))
+    plt.plot(data_subset['time'], data_subset['close'], color='black', label='Close Price')
+
+    for trade in trade_log:
+        entry_color = 'green' if trade['type'] == 'Buy' else 'red'
+        exit_color = 'blue'
+        plt.scatter(trade['time'], trade['entry_price'], color=entry_color, label=f"{trade['type']} Entry")
+        plt.scatter(trade['exit_time'], trade['exit_price'], color=exit_color, label=f"{trade['type']} Exit 0.1")
+        plt.annotate(f"exit 0.1", (trade['exit_time'], trade['exit_price']), textcoords="offset points", xytext=(0,10), ha='center')
+
+    plt.legend()
+    plt.xlabel('Date')
+    plt.ylabel('Price')
+    plt.title(f'BTCUSD Price Prediction with LSTM (Balance: {balance:.2f})')
+    plt.show()
 
 def fetch_historical_data(symbol, timeframe, days):
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, days)
@@ -73,76 +119,6 @@ def create_train_data(scaled_data, time_step):
     X_train, y_train = np.array(X_train), np.array(y_train)
     X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
     return X_train, y_train
-
-def predict_future(model, data, future_hours):
-    predictions = []
-    time_step = 60
-    input_seq = data[-time_step:]
-
-    for _ in range(future_hours):
-        input_seq = input_seq.reshape((1, input_seq.shape[0], 1))
-        predicted_price = model.predict(input_seq)[0]
-        predictions.append(predicted_price)
-        input_seq = np.append(input_seq[:, 1:], predicted_price)
-    return predictions
-
-def backtest_and_plot(data, predicted_prices):
-    initial_balance = 10000
-    balance = initial_balance
-    lot_size = 0.1
-    trade_log = []
-
-    # Filter the data for the period of June 1, 2024, to July 1, 2024
-    data_subset = data[(data['time'] >= '2024-06-01') & (data['time'] <= '2024-07-01')].copy()
-
-    open_trade = None  # To keep track of the currently open trade
-    for i in range(1, len(data_subset) - 1):
-        if i >= len(predicted_prices):
-            break  # Exit if we run out of predictions
-
-        if open_trade is None:
-            if predicted_prices[i] > predicted_prices[i-1]:
-                # Open a buy trade
-                entry_price = data_subset['close'].iloc[i]
-                open_trade = {'time': data_subset['time'].iloc[i], 'type': 'Buy', 'entry_price': entry_price}
-            elif predicted_prices[i] < predicted_prices[i-1]:
-                # Open a sell trade
-                entry_price = data_subset['close'].iloc[i]
-                open_trade = {'time': data_subset['time'].iloc[i], 'type': 'Sell', 'entry_price': entry_price}
-
-        if open_trade is not None:
-            if open_trade['type'] == 'Buy':
-                # Check if we can close the buy trade profitably
-                current_price = data_subset['close'].iloc[i+1]
-                if current_price > open_trade['entry_price'] + 0.1 / lot_size:
-                    trade_log.append({**open_trade, 'exit_price': current_price, 'exit_time': data_subset['time'].iloc[i+1]})
-                    balance += lot_size * (current_price - open_trade['entry_price']) * 100000
-                    open_trade = None
-            elif open_trade['type'] == 'Sell':
-                # Check if we can close the sell trade profitably
-                current_price = data_subset['close'].iloc[i+1]
-                if current_price < open_trade['entry_price'] - 0.1 / lot_size:
-                    trade_log.append({**open_trade, 'exit_price': current_price, 'exit_time': data_subset['time'].iloc[i+1]})
-                    balance += lot_size * (open_trade['entry_price'] - current_price) * 100000
-                    open_trade = None
-
-    # Plotting the results
-    plt.figure(figsize=(9, 9))
-    plt.plot(data_subset['time'], data_subset['close'], color='black', label='Close Price')
-
-    # Plot trades on the chart
-    for trade in trade_log:
-        entry_color = 'green' if trade['type'] == 'Buy' else 'red'
-        exit_color = 'blue'
-        plt.scatter(trade['time'], trade['entry_price'], color=entry_color, label=f"{trade['type']} Entry")
-        plt.scatter(trade['exit_time'], trade['exit_price'], color=exit_color, label=f"{trade['type']} Exit 0.1")
-        plt.annotate(f"exit 0.1", (trade['exit_time'], trade['exit_price']), textcoords="offset points", xytext=(0,10), ha='center')
-
-    plt.legend()
-    plt.xlabel('Date')
-    plt.ylabel('Price')
-    plt.title(f'BTCUSD Price Prediction with LSTM (Balance: {balance:.2f})')
-    plt.show()
 
 def show_ui():
     root = tk.Tk()
