@@ -44,7 +44,7 @@ def perform_backtest():
     lot_size = 0.1
     trade_log = []
     
-    # Randomized trading logic: take 8 trades at random positions
+    # Trading logic: take 8 trades at specific positions
     num_trades = 8
     trade_positions = random.sample(range(time_step, len(data) - 1), num_trades)
     
@@ -55,12 +55,12 @@ def perform_backtest():
 
         current_price = data['close'].iloc[i]
 
-        # Randomly decide between Buy and Sell
-        if random.choice([True, False]):
-            # Open a Buy trade
+        # Trading decision based on model's predicted price
+        if predicted_price > current_price:
+            # Open a Buy trade if the model predicts the price will rise
             trade_type = 'Buy'
         else:
-            # Open a Sell trade
+            # Open a Sell trade if the model predicts the price will fall
             trade_type = 'Sell'
 
         # Log the trade entry
@@ -69,11 +69,11 @@ def perform_backtest():
         # Determine exit point based on .1 profit condition
         for j in range(i+1, len(data)):
             next_price = data['close'].iloc[j]
-            if trade_type == 'Buy' and next_price > open_trade['entry_price'] + 0.1 / lot_size:
+            if trade_type == 'Buy' and next_price > open_trade['entry_price'] + 99.9 / lot_size:
                 balance += lot_size * (next_price - open_trade['entry_price']) * 100000
                 trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data['time'].iloc[j]})
                 break
-            elif trade_type == 'Sell' and next_price < open_trade['entry_price'] - 0.1 / lot_size:
+            elif trade_type == 'Sell' and next_price < open_trade['entry_price'] - 99.9 / lot_size:
                 balance += lot_size * (open_trade['entry_price'] - next_price) * 100000
                 trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data['time'].iloc[j]})
                 break
@@ -85,8 +85,19 @@ def perform_backtest():
     for trade in trade_log:
         entry_color = 'green' if trade['type'] == 'Buy' else 'red'
         exit_color = 'blue'
+
+        # Plot the entry point
         plt.scatter(trade['time'], trade['entry_price'], color=entry_color, label=f"{trade['type']} Entry")
+        
+        # Plot the exit point
         plt.scatter(trade['exit_time'], trade['exit_price'], color=exit_color, label=f"{trade['type']} Exit")
+
+        # Draw a dotted line between entry and exit for all trades
+        plt.plot([trade['time'], trade['exit_time']],
+                 [trade['entry_price'], trade['exit_price']],
+                 linestyle='dotted', color='gray')
+
+        # Annotate the exit point
         plt.annotate(f"exit", (trade['exit_time'], trade['exit_price']), textcoords="offset points", xytext=(0,10), ha='center')
 
     plt.legend()
