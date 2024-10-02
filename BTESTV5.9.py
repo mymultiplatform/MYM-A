@@ -39,10 +39,11 @@ def perform_backtest():
     model = train_lstm_model(train_data, validation_data)
 
     time_step = 60
-    balance = 10000  # Starting balance with $10000 capital
+    balance = 1000  # Starting balance with $1000 capital
     leverage = 5  # Leverage is 5:1
     stop_loss_pct = 0.02  # Stop-loss at 2% of the trade
     trade_log = []
+    rewards = []  # Track rewards for trades
 
     # Randomly sample 8 trades between 2019 and 2024
     num_trades = 8
@@ -81,6 +82,7 @@ def perform_backtest():
                     balance = max(0, balance)  # Prevent balance from going negative
                     trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data['time'].iloc[j], 'liquidated': False, 'stop_loss': True})
                     trade_open = False
+                    rewards.append(-1)  # Punish for stop-loss
                     print(f"Trade {trade_index + 1} stopped out at {data['time'].iloc[j]} with stop-loss at {next_price}")
                     break
 
@@ -90,16 +92,21 @@ def perform_backtest():
                         profit = (balance * leverage) * 0.01  # 1% profit
                         balance += profit
                         trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data['time'].iloc[j], 'liquidated': False, 'stop_loss': False})
+                        rewards.append(1)  # Reward for profit
                         trade_open = False
                 elif trade_type == 'Sell':
                     if next_price <= open_trade['entry_price'] * 0.99:
                         profit = (balance * leverage) * 0.01  # 1% profit
                         balance += profit
                         trade_log.append({**open_trade, 'exit_price': next_price, 'exit_time': data['time'].iloc[j], 'liquidated': False, 'stop_loss': False})
+                        rewards.append(1)  # Reward for profit
                         trade_open = False
 
             if not trade_open:
                 break  # Exit loop once the trade is closed
+
+        # After every trade, adjust the model slightly based on reward or punishment
+        adjust_model_with_rewards(model, rewards, input_seq)
 
     # Plotting the results
     plt.figure(figsize=(12, 6))  # Make the figure larger for clarity
@@ -134,6 +141,22 @@ def perform_backtest():
     plt.tight_layout()  # Adjust layout to make room for labels
     plt.grid()  # Add grid for better visibility
     plt.show()
+
+def adjust_model_with_rewards(model, rewards, input_seq):
+    """ 
+    Adjust the model weights slightly based on the trade outcome.
+    Positive reward increases confidence in the decision, negative reward penalizes it.
+    """
+    if len(rewards) == 0:
+        return  # Skip adjustment if there are no rewards yet
+
+    last_reward = rewards[-1]
+    if last_reward > 0:
+        # Reward: reinforce the model's decision by training it more with the same input
+        model.fit(input_seq, np.array([[1]]), epochs=1, verbose=0)
+    else:
+        # Punish: penalize by training on opposite decision
+        model.fit(input_seq, np.array([[0]]), epochs=1, verbose=0)
 
 def fetch_historical_data(symbol, timeframe, days):
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, days)
