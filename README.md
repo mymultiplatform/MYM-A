@@ -49,11 +49,12 @@ The **Algotrader** project provides a backtesting engine for a cryptocurrency tr
 ### **Installation Steps**
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-repo/algotrader.git
+   git clone https://github.com/mymultiplatform/MYM-A.git
    ```
 2. Navigate to the project directory:
    ```bash
-   cd algotrader
+   cd MYM-A.git
+  
    ```
 3. Install required dependencies:
    ```bash
