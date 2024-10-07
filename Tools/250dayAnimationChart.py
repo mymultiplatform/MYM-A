@@ -33,6 +33,13 @@ def fetch_historical_data(symbol, timeframe, start_date, days=1):
 def plot_day_chart(day, data, ax):
     ax.clear()
     ax.plot(data['time'], data['close'], color='black', label='Close Price')
+    
+    # Find the 12:00 PM point
+    noon_point = data[data['time'].dt.time == pd.Timestamp('12:00:00').time()]
+    
+    if not noon_point.empty:
+        ax.plot(noon_point['time'], noon_point['close'], 'ro', label='12 PM')
+
     ax.set_xlabel('Time')
     ax.set_ylabel('Price')
     ax.set_title(f'BTCUSD Price Chart - {day.strftime("%Y-%m-%d")}')
@@ -51,31 +58,33 @@ def start_animation():
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
     total_days = len(date_range)
 
+    # Fetch all the data before starting the animation
+    historical_data = {}
+    for current_day in date_range:
+        try:
+            data = fetch_historical_data(symbol, timeframe, current_day)
+            historical_data[current_day] = data
+        except Exception as e:
+            print(f"Error fetching data for {current_day.strftime('%Y-%m-%d')}: {e}")
+            historical_data[current_day] = None
+
     # Setup the figure for plotting
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    # Variable to track the frame number and status
-    frame_status = {'plotted': False}
-
     def update(frame):
-        # Get the current day from the date_range
         current_day = date_range[frame]
+        data = historical_data[current_day]
 
-        # Fetch historical data for the current day
-        try:
-            data = fetch_historical_data(symbol, timeframe, current_day)
-            frame_status['plotted'] = True  # Set the status as plotted
-            print(f"Plotting chart for {current_day.strftime('%Y-%m-%d')} (Day {frame + 1}/{total_days})")
-        except Exception as e:
-            frame_status['plotted'] = False
-            print(f"Error fetching data for {current_day.strftime('%Y-%m-%d')}: {e}")
+        if data is None:
+            print(f"Skipping day {current_day.strftime('%Y-%m-%d')} due to data issue")
             return
 
         # Plot the data for the current day
         plot_day_chart(current_day, data, ax)
+        print(f"Displayed chart for {current_day.strftime('%Y-%m-%d')} (Day {frame + 1}/{total_days})")
 
-    # Set up the animation with a 5-second delay between frames
-    ani = FuncAnimation(fig, update, frames=total_days, interval=5000, repeat=False)
+    # Set up the animation with a 100ms delay between frames (10 charts per second)
+    ani = FuncAnimation(fig, update, frames=total_days, interval=100, repeat=False)
 
     plt.show()
 
