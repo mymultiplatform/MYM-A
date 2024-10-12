@@ -5,25 +5,52 @@ import numpy as np
 from datetime import datetime, timedelta
 import random
 from metrics.performance_metrics import PerformanceTracker
+import openpyxl
+import pandas as pd
 
+# Initialize the performance tracker
 # Initialize the performance tracker
 performance_tracker = PerformanceTracker()
 
+# Global list to store trade data
+trade_data = []
+
 def place_trade(order_type, trade_date, price):
+    global trade_data
+
     symbol = "BTCUSD"
     lot_size = 0.1
     print(f"Simulated trade placed on {trade_date}: {order_type} {symbol} at {price}")
-    
+
     # Simulate trade outcome
     exit_date = trade_date + timedelta(days=random.randint(1, 5))
     exit_price = price * (1 + random.uniform(-0.05, 0.05))
     profit = exit_price - price if order_type == "BUY" else price - exit_price
-    
+
     print(f"Simulated trade closed on {exit_date}: Exit price {exit_price}, Profit: {profit}")
-    
+
     # Update performance tracker
     performance_tracker.update(order_type, price, exit_price, trade_date, exit_date)
 
+    # Append trade details to the trade_data list
+    trade_data.append({
+        "Order Type": order_type,
+        "Trade Date": trade_date,
+        "Entry Price": price,
+        "Exit Date": exit_date,
+        "Exit Price": exit_price,
+        "Profit": profit
+    })
+
+def export_trades_to_excel():
+    # Convert trade data to DataFrame
+    trade_df = pd.DataFrame(trade_data)
+    
+    # Export DataFrame to Excel
+    with pd.ExcelWriter('trades_report.xlsx') as writer:
+        trade_df.to_excel(writer, sheet_name='Trade Details', index=False)
+
+# Other functions like simulate_trade_outcome, monitor_trade, etc.
 def generate_performance_report():
     performance_tracker.generate_report()
 

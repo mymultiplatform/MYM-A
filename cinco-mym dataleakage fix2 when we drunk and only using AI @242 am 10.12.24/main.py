@@ -5,6 +5,8 @@ import threading
 from dice.dice_functions import setup_dice_ui, auto_roll
 from metatrader.mt5_functions import connect_to_mt5, start_automation
 import numpy as np
+import pandas as pd  # Ensure pandas is imported
+from trading.trading_functions import export_trades_to_excel  # Import the function
 
 def main():
     global root, display_var, click_button, message_label, connect_button
@@ -53,5 +55,25 @@ def main():
 
     root.mainloop()
 
+def export_to_excel():
+    # Create data for each section
+    ui_data = {
+        "Title": ["MYM-A MODO CHEZ"],
+        "Geometry": ["600x400"],
+        "Frames": ["Dice Frame", "Login Frame"],
+    }
+    
+    # Other data sections as needed
+    
+    # Create DataFrames
+    ui_df = pd.DataFrame(ui_data)
+    # Other DataFrames for other sections
+    
+    # Export to Excel
+    with pd.ExcelWriter('codebase_overview.xlsx') as writer:
+        ui_df.to_excel(writer, sheet_name='UI Setup', index=False)
+        # Other DataFrames to Excel
+
 if __name__ == "__main__":
     main()
+    export_trades_to_excel()  # Call the function here to export trade data after running the main function
