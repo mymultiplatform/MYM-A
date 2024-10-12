@@ -7,6 +7,7 @@ import pandas as pd
 import time
 from datetime import datetime
 import numpy as np
+
 def connect_to_mt5(login, password, server):
     if not mt5.initialize():
         messagebox.showerror("Error", "initialize() failed")
@@ -48,7 +49,7 @@ def run_backtest(symbol, timeframe, start_date, end_date):
 
     for i in range(window_size, len(df), step_size):
         train_data = df.iloc[max(0, i-window_size):i]
-        test_data = df.iloc[i:i+step_size]
+        test_data = df.iloc[i:min(i+step_size, len(df))]
 
         scaled_train_data, scaler = preprocess_data(train_data[['close']])
         if scaled_train_data is None or scaler is None:
@@ -66,7 +67,7 @@ def run_backtest(symbol, timeframe, start_date, end_date):
             continue
 
         for j, row in test_data.iterrows():
-            historical_data = df.iloc[:j+1]
+            historical_data = df.iloc[:i+1]  # Use data only up to the current test point
             scaled_historical_data = scaler.transform(historical_data[['close']].values.reshape(-1, 1))
 
             future_days = 1
@@ -129,7 +130,7 @@ def automation_loop():
             continue
 
         for j, row in test_data.iterrows():
-            historical_data = data.iloc[:j+1]
+            historical_data = data.iloc[:i+1]  # Use data only up to the current test point
             scaled_historical_data = scaler.transform(historical_data[['close']].values.reshape(-1, 1))
 
             future_days = 1
