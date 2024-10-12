@@ -92,8 +92,8 @@ def connect_to_mt5(login, password, server):
 def start_backtesting():
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_D1
-    start_date = datetime(2020, 1, 1)
-    end_date = datetime(2023, 12, 31)
+    start_date = datetime(2019, 1, 1)
+    end_date = datetime(2021, 12, 31)
     
     threading.Thread(target=run_backtest, args=(symbol, timeframe, start_date, end_date), daemon=True).start()
 
@@ -112,48 +112,60 @@ def run_backtest(symbol, timeframe, start_date, end_date):
         print("Not enough data for backtesting")
         return
 
-    # Preprocess all data at once
-    scaled_data, scaler = preprocess_data(df[['close']])
-    if scaled_data is None or scaler is None:
-        print("Failed to preprocess data")
+    # Split data for main test and real backtest
+    main_test_data = df[(df['time'] >= '2019-01-01') & (df['time'] <= '2020-12-31')]
+    real_backtest_data = df[(df['time'] >= '2021-01-01') & (df['time'] <= '2021-09-30')]
+    real_backtest_train_data = df[df['time'] < '2021-01-01']
+
+    # Preprocess training data for real backtest
+    scaled_train_data, scaler = preprocess_data(real_backtest_train_data[['close']])
+    if scaled_train_data is None or scaler is None:
+        print("Failed to preprocess training data")
         return
     
-    print(f"Scaled data shape: {scaled_data.shape}")
+    print(f"Scaled training data shape: {scaled_train_data.shape}")
 
-    # Train the model once with all available data
-    model = train_lstm_model(scaled_data)
+    model = train_lstm_model(scaled_train_data)
     if model is None:
         print("Failed to train model")
         return
 
-    # Use a sliding window approach for backtesting
-    window_size = 60  # Use the same window size as in create_train_data
-    for i in range(window_size, len(df)):
-        current_data = scaled_data[i-window_size:i]
-        
+    # Simulate trading on real backtest data
+    for i in range(len(real_backtest_data)):
+        current_date = real_backtest_data.iloc[i]['time']
+        historical_data = df[df['time'] < current_date]
+
+        # Use the same scaler fitted on training data
+        scaled_historical_data = scaler.transform(historical_data[['close']].values.reshape(-1, 1))
+        if scaled_historical_data is None:
+            print(f"Failed to preprocess historical data at index {i}")
+            continue
+
         future_days = 1
-        predicted_prices = predict_future(model, current_data, future_days)
+        predicted_prices = predict_future(model, scaled_historical_data[-60:], future_days)
         predicted_prices = scaler.inverse_transform(np.array(predicted_prices).reshape(-1, 1))
-        
-        actual_price = df.iloc[i]['close']
+
+        actual_price = real_backtest_data.iloc[i]['close']
         predicted_price = predicted_prices[0][0]
-        
+
         if predicted_price > actual_price:
             trend = "Bull"
         elif predicted_price < actual_price:
             trend = "Bear"
         else:
             trend = "Neutral"
-        
-        # Simulate trade based on prediction
-        if trend in ["Bull", "Bear"]:
-            entry_price = df.iloc[i-1]['close']
-            exit_price = actual_price
-            trade_type = "BUY" if trend == "Bull" else "SELL"
-            
-            performance_tracker.update(trade_type, entry_price, exit_price, df.iloc[i-1]['time'], df.iloc[i]['time'])
 
-    # Print backtest results
+        if trend == "Bull":
+            entry_price = real_backtest_data.iloc[i-1]['close'] if i > 0 else real_backtest_data.iloc[i]['close']
+            exit_price = actual_price
+            performance_tracker.update("BUY", entry_price, exit_price, historical_data.iloc[-1]['time'], current_date)
+
+        elif trend == "Bear":
+            entry_price = real_backtest_data.iloc[i-1]['close'] if i > 0 else real_backtest_data.iloc[i]['close']
+            exit_price = actual_price
+            performance_tracker.update("SELL", entry_price, exit_price, historical_data.iloc[-1]['time'], current_date)
+
+    # Print final results of real backtest
     performance_tracker.generate_report()
 
 def start_automation():
@@ -181,11 +193,19 @@ def automation_loop():
         return
     
     # Split data into training and testing sets
-    train_data = data[data['time'] < '2024-01-01']
-    test_data = data[data['time'] >= '2024-01-01']
+    train_data = data[data['time'] < '2024-07-01']  # Use data before July 2024 for training
+    test_data = data[data['time'] >= '2024-07-01']  # Use data from July 2024 onwards for testing
+
+    print(f"Training data shape: {train_data.shape}")
+    if train_data.empty:
+        print("Training data is empty after splitting")
+        return
+    print(data.head())
+    print(data.tail())
+    print(data.describe())
 
 
-    
+
     print(f"Training data shape: {train_data.shape}")
     print(f"Testing data shape: {test_data.shape}")
     
@@ -194,38 +214,39 @@ def automation_loop():
     if scaled_train_data is None or scaler is None:
         print("Failed to preprocess training data")
         return
-    
+
     print(f"Scaled training data shape: {scaled_train_data.shape}")
-    
+
     model = train_lstm_model(scaled_train_data)
     if model is None:
         print("Failed to train initial model")
         return
-    
+
     # Simulate trading on test data
     for i in range(len(test_data)):
         current_date = test_data.iloc[i]['time']
         historical_data = data[data['time'] < current_date]
-        
-        scaled_historical_data, _ = preprocess_data(historical_data[['close']])
+
+        # Use the same scaler fitted on training data
+        scaled_historical_data = scaler.transform(historical_data[['close']].values.reshape(-1, 1))
         if scaled_historical_data is None:
             print(f"Failed to preprocess historical data at index {i}")
             continue
-        
+
         future_days = 1
         predicted_prices = predict_future(model, scaled_historical_data[-60:], future_days)
         predicted_prices = scaler.inverse_transform(np.array(predicted_prices).reshape(-1, 1))
-        
+
         actual_price = test_data.iloc[i]['close']
         predicted_price = predicted_prices[0][0]
-        
+
         if predicted_price > actual_price:
             trend = "Bull"
         elif predicted_price < actual_price:
             trend = "Bear"
         else:
             trend = "Neutral"
-        
+
         if trend == "Bull":
             entry_price = test_data.iloc[i-1]['close'] if i > 0 else test_data.iloc[i]['close']
             exit_price = actual_price
@@ -235,18 +256,18 @@ def automation_loop():
             entry_price = test_data.iloc[i-1]['close'] if i > 0 else test_data.iloc[i]['close']
             exit_price = actual_price
             performance_tracker.update("SELL", entry_price, exit_price, historical_data.iloc[-1]['time'], current_date)
-        
+
         # Retrain model periodically (e.g., every 30 days)
         if i % 30 == 0 and i > 0:
             updated_train_data = data[data['time'] < current_date]
-            scaled_updated_train_data, scaler = preprocess_data(updated_train_data[['close']])
-            if scaled_updated_train_data is not None and scaler is not None:
+            scaled_updated_train_data = scaler.transform(updated_train_data[['close']].values.reshape(-1, 1))
+            if scaled_updated_train_data is not None:
                 model = train_lstm_model(scaled_updated_train_data)
                 if model is None:
                     print(f"Failed to retrain model at index {i}")
-        
+
         time.sleep(1)  # Simulate daily trading
-    
+
     # Print final results of live trading
     performance_tracker.generate_report()
     print("Live trading simulation completed for 2023")
