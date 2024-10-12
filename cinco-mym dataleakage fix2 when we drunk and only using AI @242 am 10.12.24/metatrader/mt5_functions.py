@@ -21,7 +21,7 @@ def connect_to_mt5(login, password, server):
         messagebox.showerror("Error", "Failed to connect to MetaTrader 5")
 
 def run_trading_process():
-    symbol = "GBPUSD"
+    symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_D1
     start_date = datetime(2010, 1, 1)
     end_date = datetime(2024, 1, 1)
