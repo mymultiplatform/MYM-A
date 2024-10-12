@@ -6,7 +6,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from datetime import datetime
-
+import os
 def fetch_historical_data(mt5, symbol, timeframe, start_date, end_date):
     if isinstance(start_date, str):
         start_date = datetime.strptime(start_date, "%Y-%m-%d")
@@ -59,19 +59,89 @@ def create_train_data(scaled_data, time_step):
     X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
     return X_train, y_train
 
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.callbacks import EarlyStopping
+from tqdm.keras import TqdmCallback
+from tqdm import tqdm
+
+# Configure TensorFlow to use GPU
+# Set TensorFlow logging level to show all messages
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
+
+print("TensorFlow version:", tf.__version__)
+
+# Configure TensorFlow to use GPU
+physical_devices = tf.config.list_physical_devices('GPU')
+print("Physical devices:", physical_devices)
+
+if len(physical_devices) > 0:
+    try:
+        for device in physical_devices:
+            tf.config.experimental.set_memory_growth(device, True)
+        print("GPU is available and configured for use.")
+        print(f"Found {len(physical_devices)} GPU(s):")
+        for i, device in enumerate(physical_devices):
+            print(f"  GPU {i}: {device}")
+    except RuntimeError as e:
+        print("Error configuring GPU:", e)
+else:
+    print("No GPU detected. Training will proceed on CPU.")
+
 def train_lstm_model(X_train, y_train):
-    model = Sequential()
-    model.add(LSTM(100, return_sequences=True, input_shape=(X_train.shape[1], 1)))
-    model.add(LSTM(100, return_sequences=False))
-    model.add(Dense(50))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
+    strategy = tf.distribute.MirroredStrategy()
+    print("Number of devices: {}".format(strategy.num_replicas_in_sync))
     
-    model.fit(X_train, y_train, batch_size=32, epochs=50, verbose=0)
+    with strategy.scope():
+        model = Sequential([
+            LSTM(200, return_sequences=True, input_shape=(X_train.shape[1], 1)),
+            LSTM(200, return_sequences=True),
+            LSTM(100, return_sequences=False),
+            Dense(50),
+            Dense(1)
+        ])
+        model.compile(optimizer='adam', loss='mean_squared_error')
+    
+    early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True)
+    
+    epochs = 1000
+    batch_size = 128
+    
+    print("Starting model training...")
+    with tqdm(total=epochs, unit="epoch") as pbar:
+        history = model.fit(
+            X_train, y_train, 
+            batch_size=batch_size, 
+            epochs=epochs, 
+            validation_split=0.2,
+            callbacks=[
+                early_stopping,
+                TqdmCallback(verbose=0)
+            ],
+            verbose=0
+        )
+        pbar.update(len(history.history['loss']))
+    
+    print("Model training completed.")
     return model
 
+# Verify GPU usage
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+print("TensorFlow is built with CUDA:", tf.test.is_built_with_cuda())
+
+# Test GPU computation
+if len(physical_devices) > 0:
+    print("Testing GPU computation...")
+    with tf.device('/GPU:0'):
+        a = tf.constant([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        b = tf.constant([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        c = tf.matmul(a, b)
+    print("GPU computation test result:", c.numpy())
+else:
+    print("Skipping GPU computation test as no GPU is available.")
 def predict_future(model, data, scaler, future_days):
-    input_seq = data[-60:]
+    input_seq = data[-1:]
     predictions = []
     for _ in range(future_days):
         input_seq_scaled = scaler.transform(input_seq.reshape(-1, 1))
@@ -107,7 +177,7 @@ def train_model(train_data):
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(train_data[['close']].values)
 
-    X_train, y_train = create_train_data(scaled_data, 60)
+    X_train, y_train = create_train_data(scaled_data, 2)
     if X_train is None or y_train is None:
         return None, None
 
@@ -115,7 +185,7 @@ def train_model(train_data):
     return model, scaler
 
 def predict_future(model, data, scaler, future_days):
-    input_seq = data[-60:].reshape(-1, 1)
+    input_seq = data[-2:].reshape(-1, 1)
     input_seq_scaled = scaler.transform(input_seq)
     input_seq_reshaped = input_seq_scaled.reshape((1, input_seq_scaled.shape[0], 1))
     predicted_scaled = model.predict(input_seq_reshaped)[0]

@@ -61,24 +61,7 @@ def update_status(message):
     status_label.config(text=message)
     root.update_idletasks()
 
-def export_to_excel():
-    # Create data for each section
-    ui_data = {
-        "Title": ["MYM-A MODO CHEZ"],
-        "Geometry": ["600x450"],
-        "Frames": ["Login Frame"],
-    }
-    
-    # Other data sections as needed
-    
-    # Create DataFrames
-    ui_df = pd.DataFrame(ui_data)
-    # Other DataFrames for other sections
-    
-    # Export to Excel
-    with pd.ExcelWriter('codebase_overview.xlsx') as writer:
-        ui_df.to_excel(writer, sheet_name='UI Setup', index=False)
-        # Other DataFrames to Excel
+
 
 if __name__ == "__main__":
     main()
