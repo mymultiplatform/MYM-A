@@ -25,8 +25,8 @@ def connect_to_mt5(login, password, server):
 def start_backtesting():
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_D1
-    start_date = datetime(2019, 1, 1)
-    end_date = datetime(2021, 12, 31)
+    start_date = datetime(2010, 1, 1)
+    end_date = datetime(2024, 12, 31)
 
     threading.Thread(target=run_backtest, args=(symbol, timeframe, start_date, end_date), daemon=True).start()
 
@@ -93,7 +93,7 @@ def automation_loop():
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_D1
     start_date = "2024-01-01"
-    end_date = "2024-10-10"
+    end_date = "2024-10-11"
 
     try:
         data = fetch_historical_data(mt5, symbol, timeframe, start_date, end_date)
@@ -108,7 +108,7 @@ def automation_loop():
         return
 
     window_size = 365
-    step_size = 30
+    step_size = 1
 
     for i in range(window_size, len(data), step_size):
         train_data = data.iloc[max(0, i-window_size):i]
