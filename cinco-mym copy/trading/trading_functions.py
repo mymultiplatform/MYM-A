@@ -4,22 +4,15 @@ import time
 import numpy as np
 from datetime import datetime, timedelta
 import random
-import MetaTrader5 as mt5
-from tkinter import messagebox
-import time
-import numpy as np
-from datetime import datetime, timedelta
-import random
-from metrics.performance_metrics import PerformanceTracker
-# Initialize the performance tracker
-performance_tracker = PerformanceTracker()
-
 def place_trade(order_type, trade_date):
     symbol = "BTCUSD"
     lot_size = 0.1
     price = mt5.symbol_info_tick(symbol).ask if order_type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).bid
     
     print(f"Simulated trade placed on {trade_date}: {'BUY' if order_type == mt5.ORDER_TYPE_BUY else 'SELL'} {symbol} at {price}")
+    
+    # In a real scenario, you would place the trade here
+    # For simulation, we're just printing the trade details
     
     # Simulated monitoring and closing of trade
     simulate_trade_outcome(order_type, price, trade_date)
@@ -29,21 +22,12 @@ def simulate_trade_outcome(order_type, entry_price, entry_date):
     exit_date = entry_date + timedelta(days=random.randint(1, 5))
     exit_price = entry_price * (1 + random.uniform(-0.05, 0.05))
     
-    trade_type = "BUY" if order_type == mt5.ORDER_TYPE_BUY else "SELL"
-    
     if order_type == mt5.ORDER_TYPE_BUY:
         profit = exit_price - entry_price
     else:
         profit = entry_price - exit_price
     
     print(f"Simulated trade closed on {exit_date}: Exit price {exit_price}, Profit: {profit}")
-    
-    # Update performance tracker
-    performance_tracker.update(trade_type, entry_price, exit_price, entry_date, exit_date)
-
-def generate_performance_report():
-    performance_tracker.generate_report()
-
 
 def monitor_trade(order_id):
     while True:
