@@ -2,24 +2,20 @@ import tkinter as tk
 from tkinter import messagebox
 import MetaTrader5 as mt5
 import threading
-from dice.dice_functions import setup_dice_ui, auto_roll
-from metatrader.mt5_functions import connect_to_mt5, start_automation
+from metatrader.mt5_functions import connect_to_mt5
 import numpy as np
-import pandas as pd  # Ensure pandas is imported
-from trading.trading_functions import export_trades_to_excel  # Import the function
+import pandas as pd
+from trading.trading_functions import export_trades_to_excel
 
 def main():
-    global root, display_var, click_button, message_label, connect_button
+    global root, connect_button
     root = tk.Tk()
     root.title("MYM-A MODO CHEZ")
     root.geometry("600x400")
 
     # Create frames
-    dice_frame = tk.Frame(root, width=300, height=400)
-    dice_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    
-    login_frame = tk.Frame(root, width=300, height=400)
-    login_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+    login_frame = tk.Frame(root, width=600, height=400)
+    login_frame.pack(fill=tk.BOTH, expand=True)
 
     # Setup Login UI
     login_title = tk.Label(login_frame, text="🏧MYM-A", font=("Helvetica", 20))
@@ -44,14 +40,8 @@ def main():
     server_entry.insert(0, "XMGlobal-MT5 7")
 
     connect_button = tk.Button(login_frame, text="Connect", font=("Helvetica", 14),
-                               command=lambda: connect_to_mt5(login_entry.get(), password_entry.get(), server_entry.get()))
+                               command=lambda: threading.Thread(target=connect_to_mt5, args=(login_entry.get(), password_entry.get(), server_entry.get())).start())
     connect_button.pack(pady=20)
-
-    # Setup Dice UI
-    display_var, click_button, message_label = setup_dice_ui(dice_frame, root, connect_button)
-
-    # Start the automatic dice rolling in a separate thread
-    threading.Thread(target=lambda: auto_roll(root, click_button, display_var), daemon=True).start()
 
     root.mainloop()
 
@@ -60,7 +50,7 @@ def export_to_excel():
     ui_data = {
         "Title": ["MYM-A MODO CHEZ"],
         "Geometry": ["600x400"],
-        "Frames": ["Dice Frame", "Login Frame"],
+        "Frames": ["Login Frame"],
     }
     
     # Other data sections as needed
@@ -76,4 +66,4 @@ def export_to_excel():
 
 if __name__ == "__main__":
     main()
-    export_trades_to_excel()  # Call the function here to export trade data after running the main function
+    # Note: export_trades_to_excel() is now called within the trading process, not here
