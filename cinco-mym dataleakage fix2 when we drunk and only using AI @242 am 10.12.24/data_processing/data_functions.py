@@ -177,7 +177,7 @@ def train_model(train_data):
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(train_data[['close']].values)
 
-    X_train, y_train = create_train_data(scaled_data, 2)
+    X_train, y_train = create_train_data(scaled_data, 30)
     if X_train is None or y_train is None:
         return None, None
 
@@ -185,7 +185,7 @@ def train_model(train_data):
     return model, scaler
 
 def predict_future(model, data, scaler, future_days):
-    input_seq = data[-2:].reshape(-1, 1)
+    input_seq = data[-5:].reshape(-30, 1)
     input_seq_scaled = scaler.transform(input_seq)
     input_seq_reshaped = input_seq_scaled.reshape((1, input_seq_scaled.shape[0], 1))
     predicted_scaled = model.predict(input_seq_reshaped)[0]
