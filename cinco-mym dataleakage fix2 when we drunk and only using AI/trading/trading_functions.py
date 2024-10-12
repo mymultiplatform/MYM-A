@@ -4,13 +4,8 @@ import time
 import numpy as np
 from datetime import datetime, timedelta
 import random
-import MetaTrader5 as mt5
-from tkinter import messagebox
-import time
-import numpy as np
-from datetime import datetime, timedelta
-import random
 from metrics.performance_metrics import PerformanceTracker
+
 # Initialize the performance tracker
 performance_tracker = PerformanceTracker()
 
@@ -49,10 +44,6 @@ def simulate_trade_outcome(order_type, entry_price, entry_date):
     # Update performance tracker
     performance_tracker.update(trade_type, entry_price, exit_price, entry_date, exit_date)
 
-def generate_performance_report():
-    performance_tracker.generate_report()
-
-
 def monitor_trade(order_id):
     while True:
         position = mt5.positions_get(ticket=order_id)
@@ -85,7 +76,5 @@ def close_trade(order_id, order_type):
     result = mt5.order_send(request)
     if result.retcode == mt5.TRADE_RETCODE_DONE:
         print("Trade successfully closed")
-        # Restart the dice rolling (you might need to adjust this based on your main application structure)
-        # root.after(0, on_button_click)
     else:
         messagebox.showerror("Trade Close Error", f"Failed to close trade: {result.retcode}")
