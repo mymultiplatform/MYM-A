@@ -2,6 +2,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from metrics.performance_metrics import PerformanceTracker
 import pandas as pd
+import os
 
 # Initialize the performance tracker
 performance_tracker = PerformanceTracker()
@@ -11,7 +12,7 @@ trade_data = {"Backtest": [], "Live Simulation": []}
 
 def place_trade(order_type, trade_date, price, phase):
     global trade_data
-    symbol = "BTCUSD"
+    symbol = "GBPUSD"
     lot_size = 0.1
     
     # Simulate a delay between prediction and execution
@@ -56,11 +57,21 @@ def export_trades_to_excel(filename):
     
     trade_df = pd.DataFrame(all_trades)
     
+    # Specify the directory
+    directory = r"C:\Users\cinco\Desktop\MYM-A\backtesting results"
+    
+    # Create the directory if it doesn't exist
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    # Create the full file path
+    file_path = os.path.join(directory, filename)
+    
     # Export DataFrame to Excel
-    with pd.ExcelWriter(filename) as writer:
+    with pd.ExcelWriter(file_path) as writer:
         trade_df.to_excel(writer, sheet_name='Trade Details', index=False)
     
-    print(f"Trade report exported to {filename}")
+    print(f"Trade report exported to {file_path}")
 
 def generate_performance_report(end_date, phase):
     performance_tracker.generate_report(end_date, phase)
