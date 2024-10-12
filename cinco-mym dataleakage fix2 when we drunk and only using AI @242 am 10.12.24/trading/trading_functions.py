@@ -2,52 +2,66 @@ import numpy as np
 from datetime import datetime, timedelta
 from metrics.performance_metrics import PerformanceTracker
 import pandas as pd
+from data_processing.data_functions import predict_future, determine_trend
 
 # Initialize the performance tracker
 performance_tracker = PerformanceTracker()
 
 # Global dictionary to store trade data for different phases
-trade_data = {"Backtest": [], "Live Simulation": []}
+trade_data = {"Backtest": []}
+
+# Global variables for account balance and position
+initial_balance = 1000
+account_balance = initial_balance
+current_position = 0
 
 def place_trade(order_type, trade_date, price, phase):
-    global trade_data
+    global trade_data, account_balance, current_position
     symbol = "BTCUSD"
-    lot_size = 0.1
+    trade_amount = 100  # Fixed trade amount of $100
     
-    # Simulate a delay between prediction and execution
     execution_delay = timedelta(minutes=5)
     execution_time = trade_date + execution_delay
     
-    # Simulate price change during the delay
-    price_change = np.random.normal(0, 0.001)  # Small random price change
+    price_change = np.random.normal(0, 0.001)
     execution_price = price * (1 + price_change)
     
-    print(f"[{phase}] Simulated trade placed on {execution_time}: {order_type} {symbol} at {execution_price}")
+    if order_type == "BUY" and account_balance >= trade_amount:
+        btc_amount = trade_amount / execution_price
+        account_balance -= trade_amount
+        current_position += btc_amount
+        print(f"[{phase}] Bought {btc_amount:.8f} BTC at ${execution_price:.2f}. Balance: ${account_balance:.2f}")
+        performance_tracker.update("BUY", execution_price, btc_amount, execution_time, phase)
+    elif order_type == "SELL" and current_position > 0:
+        sell_amount = min(current_position, trade_amount / execution_price)
+        account_balance += sell_amount * execution_price
+        current_position -= sell_amount
+        print(f"[{phase}] Sold {sell_amount:.8f} BTC at ${execution_price:.2f}. Balance: ${account_balance:.2f}")
+        performance_tracker.update("SELL", execution_price, sell_amount, execution_time, phase)
+    else:
+        print(f"[{phase}] Insufficient balance or no position to trade. No action taken.")
+        return None
     
-    # Simulate trade outcome
-    # Simulate trade outcome
-    holding_period = timedelta(days=1) # Assume we hold the trade for 1 day
-    exit_date = execution_time + holding_period
-    exit_price = execution_price * (1 + np.random.normal(0, 0.02)) # Simulate price change with some randomness
-
-    profit = exit_price - execution_price if order_type == "BUY" else execution_price - exit_price
-    print(f"[{phase}] Simulated trade closed on {exit_date}: Exit price {exit_price}, Profit: {profit}")
-    
-    # Update performance tracker
-    performance_tracker.update(order_type, execution_price, exit_price, execution_time, exit_date, phase)
-    
-    # Append trade details to the trade_data list
-    trade_data[phase].append({
+    trade_result = {
         "Order Type": order_type,
         "Trade Date": execution_time,
-        "Entry Price": execution_price,
-        "Exit Date": exit_date,
-        "Exit Price": exit_price,
-        "Profit": profit
-    })
+        "Price": execution_price,
+        "Amount": btc_amount if order_type == "BUY" else sell_amount,
+        "Balance": account_balance,
+        "Position": current_position
+    }
+    
+    trade_data[phase].append(trade_result)
+    
+    return trade_result
+
+def reset_account():
+    global account_balance, current_position
+    account_balance = initial_balance
+    current_position = 0
+    print(f"Account reset. Balance: ${account_balance:.2f}")
 
 def export_trades_to_excel(filename):
-    # Convert trade data to DataFrame
     all_trades = []
     for phase, trades in trade_data.items():
         for trade in trades:
@@ -56,7 +70,6 @@ def export_trades_to_excel(filename):
     
     trade_df = pd.DataFrame(all_trades)
     
-    # Export DataFrame to Excel
     with pd.ExcelWriter(filename) as writer:
         trade_df.to_excel(writer, sheet_name='Trade Details', index=False)
     
@@ -65,32 +78,42 @@ def export_trades_to_excel(filename):
 def generate_performance_report(end_date, phase):
     performance_tracker.generate_report(end_date, phase)
 
-def simulate_market_conditions(base_price, volatility=0.02, trend=0):
-    """Simulate market conditions for more realistic backtesting."""
-    return base_price * (1 + np.random.normal(trend, volatility))
+def backtest_strategy(all_data, model, scaler):
+    train_end = datetime(2022, 1, 1)
+    backtest_end = datetime(2024, 1, 1)
+    backtest_data = all_data[(all_data['time'] >= train_end) & (all_data['time'] < backtest_end)]
+    print("Starting Backtest phase...")
+    backtest_results = run_phase(backtest_data, model, scaler, "Backtest")
+    print("Backtest completed")
 
-def backtest_strategy(backtest_data, model, scaler, phase):
-    print(f"Starting {phase}...")
-    for i in range(60, len(backtest_data)):
-        historical_data = backtest_data.iloc[:i]
-        current_data = backtest_data.iloc[i]
+    return backtest_results
 
-        scaled_historical_data = scaler.transform(historical_data[['close']].values.reshape(-1, 1))
-        predicted_prices = predict_future(model, scaled_historical_data[-60:], scaler, 1)
+def run_phase(phase_data, model, scaler, phase):
+    global account_balance, current_position
+    phase_results = []
+    
+    for i in range(60, len(phase_data)):
+        if account_balance <= 0 and current_position == 0:
+            reset_account()
+        
+        historical_data = phase_data.iloc[:i]
+        current_data = phase_data.iloc[i]
+
+        predicted_prices = predict_future(model, historical_data['close'].values, scaler, 1)
         predicted_price = predicted_prices[0][0]
 
-        trend = determine_trend([current_data['close'], predicted_price])
+        trend = determine_trend(current_data['close'], predicted_price)
 
-        if trend == "Bull":
-            place_trade("BUY", current_data['time'], current_data['close'], phase)
-        elif trend == "Bear":
-            place_trade("SELL", current_data['time'], current_data['close'], phase)
+        if trend == "Bull" and account_balance >= 100:
+            trade_result = place_trade("BUY", current_data['time'], current_data['close'], phase)
+            if trade_result:
+                phase_results.append(trade_result)
+        elif trend == "Bear" and current_position > 0:
+            trade_result = place_trade("SELL", current_data['time'], current_data['close'], phase)
+            if trade_result:
+                phase_results.append(trade_result)
 
-        print(f"[{phase}] Date: {current_data['time']}, Actual: {current_data['close']:.2f}, Predicted: {predicted_price:.2f}, Trend: {trend}")
+        print(f"[{phase}] Date: {current_data['time']}, Actual: {current_data['close']:.2f}, Predicted: {predicted_price:.2f}, Trend: {trend}, Balance: ${account_balance:.2f}, Position: {current_position:.8f}")
 
-    print(f"{phase} completed")
-
-
-
-# You'll need to import these functions if they're not in this file
-from data_processing.data_functions import predict_future, determine_trend
+    print(f"{phase} phase completed")
+    return phase_results
