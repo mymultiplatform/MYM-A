@@ -2,7 +2,6 @@ import numpy as np
 from datetime import datetime, timedelta
 from metrics.performance_metrics import PerformanceTracker
 import pandas as pd
-from data_processing.data_functions import predict_future, determine_trend
 
 # Initialize the performance tracker
 performance_tracker = PerformanceTracker()
@@ -17,15 +16,16 @@ current_position = 0
 
 def place_trade(order_type, trade_date, price, phase):
     global trade_data, account_balance, current_position
-    symbol = "BTCUSD"
-    trade_amount = 100  # Fixed trade amount of $100
+    symbol = "Nvidia"
+    trade_amount = 200  # Fixed trade amount of $100
     
+    # Assume the execution time is slightly delayed
     execution_delay = timedelta(minutes=5)
     execution_time = trade_date + execution_delay
     
-    price_change = np.random.normal(0, 0.001)
-    execution_price = price * (1 + price_change)
-    
+    # Use the provided price directly from MetaTrader 5 data
+    execution_price = price
+
     if order_type == "BUY" and account_balance >= trade_amount:
         btc_amount = trade_amount / execution_price
         account_balance -= trade_amount
@@ -55,6 +55,8 @@ def place_trade(order_type, trade_date, price, phase):
     
     return trade_result
 
+
+
 def reset_account():
     global account_balance, current_position
     account_balance = initial_balance
@@ -78,17 +80,49 @@ def export_trades_to_excel(filename):
 def generate_performance_report(end_date, phase):
     performance_tracker.generate_report(end_date, phase)
 
-def backtest_strategy(all_data, model, scaler):
-    train_end = datetime(2022, 1, 1)
-    backtest_end = datetime(2024, 1, 1)
-    backtest_data = all_data[(all_data['time'] >= train_end) & (all_data['time'] < backtest_end)]
-    print("Starting Backtest phase...")
-    backtest_results = run_phase(backtest_data, model, scaler, "Backtest")
-    print("Backtest completed")
+def backtest_strategy(scaled_data, model, scaler, window_size, dates):
+    from data_processing.data_functions import determine_trend
+    
+    # Assuming only 252 trading days
+    max_days = 252
+    
+    # Adjusting for the minimum of actual data length and assumed trading days
+    total_days = min(len(scaled_data), len(dates), max_days)
+    
+    results = []
+    
+    for i in range(window_size, total_days):
+        X = scaled_data[i-window_size:i].reshape(1, window_size, 1)
+        y_pred = model.predict(X)[0][0]
+        y_true = scaled_data[i][0]
+        
+        current_price = scaler.inverse_transform([[y_true]])[0][0]
+        predicted_price = scaler.inverse_transform([[y_pred]])[0][0]
+        
+        trend = determine_trend(current_price, predicted_price)
+        
+        results.append({
+            'date': dates.iloc[i],  # Use iloc for safe index access
+            'actual_price': current_price,
+            'predicted_price': predicted_price,
+            'trend': trend
+        })
+        
+        if trend == "Bull" and account_balance >= 100:
+            trade_result = place_trade("BUY", dates.iloc[i], current_price, "Backtest")
+            if trade_result:
+                results[-1].update(trade_result)
+        elif trend == "Bear" and current_position > 0:
+            trade_result = place_trade("SELL", dates.iloc[i], current_price, "Backtest")
+            if trade_result:
+                results[-1].update(trade_result)
 
-    return backtest_results
+    return results
+
+
 
 def run_phase(phase_data, model, scaler, phase):
+    from data_processing.data_functions import predict_future, determine_trend
     global account_balance, current_position
     phase_results = []
     
