@@ -22,17 +22,17 @@ class MT5DataChecker:
         ttk.Label(self.login_frame, text="Login:").grid(column=0, row=1, sticky=tk.W, pady=5)
         self.login_entry = ttk.Entry(self.login_frame)
         self.login_entry.grid(column=1, row=1, sticky=(tk.W, tk.E), pady=5)
-        self.login_entry.insert(0, "312128713")
+        self.login_entry.insert(0, "6328884")
 
         ttk.Label(self.login_frame, text="Password:").grid(column=0, row=2, sticky=tk.W, pady=5)
         self.password_entry = ttk.Entry(self.login_frame, show="*")
         self.password_entry.grid(column=1, row=2, sticky=(tk.W, tk.E), pady=5)
-        self.password_entry.insert(0, "Sexo247420@")
+        self.password_entry.insert(0, "Q-YqVeK8")
 
         ttk.Label(self.login_frame, text="Server:").grid(column=0, row=3, sticky=tk.W, pady=5)
         self.server_entry = ttk.Entry(self.login_frame)
         self.server_entry.grid(column=1, row=3, sticky=(tk.W, tk.E), pady=5)
-        self.server_entry.insert(0, "XMGlobal-MT5 7")
+        self.server_entry.insert(0, "OANDA-Demo-1")
 
         self.connect_button = ttk.Button(self.login_frame, text="Connect", command=self.connect_to_mt5)
         self.connect_button.grid(column=0, row=4, columnspan=2, pady=20)

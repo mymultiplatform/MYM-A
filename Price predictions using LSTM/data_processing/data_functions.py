@@ -118,7 +118,7 @@ def train_lstm_model(X_train, y_train, window_size):
         verbose=1
     )
     
-    epochs = 9000
+    epochs = 80
     batch_size = 128
     
     print("Starting model training...")
@@ -151,11 +151,11 @@ def predict_future(model, train_data, scaler, future_periods, window_size):
 
 def run_trading_process():
     # Define the symbol and timeframe
-    symbol = "BTCUSD"
+    symbol = "NVDA_CFD.US"
     timeframe = mt5.TIMEFRAME_H4  # 4-hour timeframe
     start_date = datetime(2012, 4, 1)
     train_end_date = datetime(2021, 12, 31, 20, 0)  # Last 4-hour candle of 2021
-    window_size = 10  # 10 days
+    window_size = 30  # 10 days
 
     # Check MT5 connection
     if not mt5.terminal_info().connected:
