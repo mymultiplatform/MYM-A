@@ -16,7 +16,7 @@ current_position = 0
 
 def place_trade(order_type, trade_date, price, phase):
     global trade_data, account_balance, current_position
-    symbol = "Nvidia"
+    symbol = "BTCUSD"
     trade_amount = 200  # Fixed trade amount of $100
     
     # Assume the execution time is slightly delayed

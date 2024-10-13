@@ -30,16 +30,16 @@ def fetch_historical_data(mt5, symbol, timeframe, start_date, end_date):
     print(f"Successfully fetched {len(df)} data points")
     return df[['time', 'close']]
 
-def preprocess_data(data, window_size=5, scaler=None, is_training=True):
+def preprocess_data(data, window_size, scaler=None, is_training=True):
     if len(data) < window_size:
         print(f"Not enough data for preprocessing. Required: {window_size}, Available: {len(data)}")
         return None, None
 
     if scaler is None and is_training:
         scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data)
+        scaled_data = scaler.fit_transform(data.reshape(-1, 1))
     elif scaler is not None:
-        scaled_data = scaler.transform(data)
+        scaled_data = scaler.transform(data.reshape(-1, 1))
     else:
         print("Error: Scaler is None for non-training data")
         return None, None
@@ -48,25 +48,35 @@ def preprocess_data(data, window_size=5, scaler=None, is_training=True):
 
 def run_trading_process():
     from trading.trading_functions import backtest_strategy, generate_performance_report, export_trades_to_excel
-    symbol = "Nvidia"
+    
+    # Define the symbol and timeframe
+    symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_D1
     start_date = datetime(2010, 1, 1)
     train_end_date = datetime(2022, 1, 1)
     backtest_end_date = datetime(2023, 1, 1)
     window_size = 5  # Consistent window size
 
-    # Fetch all historical data
+    # Fetch all historical data from 2010 to the start of 2023
     all_data = fetch_historical_data(mt5, symbol, timeframe, start_date, backtest_end_date)
     if all_data is None or len(all_data) == 0:
         print("Failed to fetch historical data")
         return
 
-    # Split data into training and backtesting periods
+    # Split data into training (2010-2021) and live testing (2022)
     train_data = all_data[all_data['time'] < train_end_date]
     backtest_data = all_data[(all_data['time'] >= train_end_date) & (all_data['time'] < backtest_end_date)]
 
+    # Verify data split
+    print(f"Training data from {train_data.iloc[0]['time']} to {train_data.iloc[-1]['time']}")
+    print(f"Backtest data from {backtest_data.iloc[0]['time']} to {backtest_data.iloc[-1]['time']}")
+
+    # Print structure of train_data
+    print("Train Data Columns:", train_data.columns)
+    print("Train Data Sample:\n", train_data.head())
+
     # Scale the training data
-    scaled_train_data, scaler = preprocess_data(train_data[['close']], window_size, is_training=True)
+    scaled_train_data, scaler = preprocess_data(train_data['close'].values, window_size, is_training=True)
     if scaler is None:
         print("Failed to scale training data")
         return
@@ -78,11 +88,15 @@ def run_trading_process():
         return
 
     # Prepare and scale backtest data using the same scaler
-    scaled_backtest_data, _ = preprocess_data(backtest_data[['close']], window_size, scaler, is_training=False)
+    scaled_backtest_data, _ = preprocess_data(backtest_data['close'].values, window_size, scaler, is_training=False)
 
-    # Run backtesting strategy on 2022-2023 data
+    # Run backtesting strategy on 2022 data
     print(f"Running backtesting from {backtest_data.iloc[0]['time']} to {backtest_data.iloc[-1]['time']}")
     backtest_results = backtest_strategy(scaled_backtest_data, model, scaler, window_size, backtest_data['time'])
+
+    # Verify data split again (as in your original code)
+    print(f"Training data from {train_data.iloc[0]['time']} to {train_data.iloc[-1]['time']}")
+    print(f"Backtest data from {backtest_data.iloc[0]['time']} to {backtest_data.iloc[-1]['time']}")
 
     # Generate and export reports
     generate_performance_report(backtest_data.iloc[-1]['time'], "Backtest")
@@ -146,8 +160,8 @@ def train_lstm_model(X_train, y_train, window_size):
     print("Model training completed.")
     return model
 
-def predict_future(model, data, scaler, future_days, window_size):
-    input_seq = data[-window_size:]
+def predict_future(model, train_data, scaler, future_days, window_size):
+    input_seq = train_data[-window_size:]
     predictions = []
     for _ in range(future_days):
         input_seq_scaled = scaler.transform(input_seq.reshape(-1, 1))
@@ -158,38 +172,18 @@ def predict_future(model, data, scaler, future_days, window_size):
     return scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
 
 
-def determine_trend(predicted_prices):
-    start_price = predicted_prices[0]
-    end_price = predicted_prices[-1]
-    if end_price > start_price:
-        return "Bull"
-    elif end_price < start_price:
-        return "Bear"
-    else:
-        return "Neutral"
 
-def split_data(data, train_ratio=0.7, val_ratio=0.15):
-    train_size = int(len(data) * train_ratio)
-    val_size = int(len(data) * val_ratio)
-    train_data = data[:train_size]
-    val_data = data[train_size:train_size+val_size]
-    test_data = data[train_size+val_size:]
-    return train_data, val_data, test_data
-
-def train_model(train_data, window_size=30):
+def train_model(train_data, window_size):
     if len(train_data) < window_size:
         print("Not enough data to train the model")
-        return None, None
+        return None
 
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(train_data[['close']].values)
-
-    X_train, y_train = create_train_data(scaled_data, window_size)
+    X_train, y_train = create_train_data(train_data, window_size)
     if X_train is None or y_train is None:
-        return None, None
+        return None
 
     model = train_lstm_model(X_train, y_train, window_size)
-    return model, scaler
+    return model
 
 def determine_trend(current_price, predicted_price):
     if predicted_price > current_price:
