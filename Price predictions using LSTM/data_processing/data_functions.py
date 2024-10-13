@@ -11,7 +11,7 @@ import MetaTrader5 as mt5
 import matplotlib.pyplot as plt
 from tensorflow.keras import backend as K
 from tensorflow.keras.callbacks import EarlyStopping
-import time
+
 
 
 def fetch_historical_data(mt5, symbol, timeframe, start_date, end_date):
@@ -96,7 +96,6 @@ def create_train_data(scaled_data, window_size):
     X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
     return X_train, y_train
 
-
 def train_lstm_model(X_train, y_train, window_size):
     strategy = tf.distribute.MirroredStrategy()
     print("Number of devices: {}".format(strategy.num_replicas_in_sync))
@@ -111,11 +110,16 @@ def train_lstm_model(X_train, y_train, window_size):
         ])
         model.compile(optimizer='adam', loss='mean_squared_error')
     
-    epochs = 8000
-    batch_size = 128
+    # Add Early Stopping
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True,
+        verbose=1
+    )
     
-    # Add early stopping
-    early_stopping = EarlyStopping(monitor='val_loss', patience=50, restore_best_weights=True)
+    epochs = 9000
+    batch_size = 128
     
     print("Starting model training...")
     with tqdm(total=epochs, unit="epoch") as pbar:
@@ -134,28 +138,6 @@ def train_lstm_model(X_train, y_train, window_size):
     
     print("Model training completed.")
     return model
-
-def train_model(train_data, window_size):
-    if len(train_data) < window_size:
-        print("Not enough data to train the model")
-        return None
-
-    X_train, y_train = create_train_data(train_data, window_size)
-    if X_train is None or y_train is None:
-        return None
-
-    model = Sequential([
-        LSTM(200, return_sequences=True, input_shape=(window_size, 1)),
-        LSTM(200, return_sequences=True),
-        LSTM(100, return_sequences=False),
-        Dense(50),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mean_squared_error')
-
-    model.fit(X_train, y_train, batch_size=128, epochs=100, validation_split=0.2, verbose=1)
-    return model
-
 def predict_future(model, train_data, scaler, future_periods, window_size):
     input_seq = train_data[-window_size:]
     predictions = []
@@ -171,105 +153,97 @@ def run_trading_process():
     # Define the symbol and timeframe
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_H4  # 4-hour timeframe
-    start_date = datetime(2012, 4,18)
+    start_date = datetime(2012, 4, 1)
     train_end_date = datetime(2021, 12, 31, 20, 0)  # Last 4-hour candle of 2021
-    window_size = 30  # 10 days
+    window_size = 10  # 10 days
 
     # Check MT5 connection
     if not mt5.terminal_info().connected:
         print("Not connected to MetaTrader 5. Please check your connection.")
         return
 
-    # Set up relearning every 30 days
-    relearn_interval = timedelta(days=30)
-    next_relearn_date = train_end_date + relearn_interval
+    # Fetch all historical 4-hour data from 2010 to the end of 2021
+    all_data = fetch_historical_data(mt5, symbol, timeframe, start_date, train_end_date)
+    if all_data is None or len(all_data) == 0:
+        print("Failed to fetch historical data. Aborting process.")
+        return
 
-    while True:
-        # Fetch all historical 4-hour data from 2010 to the current train_end_date
-        all_data = fetch_historical_data(mt5, symbol, timeframe, start_date, train_end_date)
-        if all_data is None or len(all_data) == 0:
-            print("Failed to fetch historical data. Aborting process.")
-            return
+    # Verify data
+    print(f"Training data from {all_data.iloc[0]['time']} to {all_data.iloc[-1]['time']}")
+    print(f"Total data points: {len(all_data)}")
 
-        # Verify data
-        print(f"Training data from {all_data.iloc[0]['time']} to {all_data.iloc[-1]['time']}")
-        print(f"Total data points: {len(all_data)}")
+    if len(all_data) < window_size:
+        print(f"Not enough data points. Required: {window_size}, Available: {len(all_data)}")
+        return
 
-        if len(all_data) < window_size:
-            print(f"Not enough data points. Required: {window_size}, Available: {len(all_data)}")
-            return
+    # Scale the training data
+    scaled_train_data, scaler = preprocess_data(all_data['close'].values, window_size, is_training=True)
+    if scaler is None:
+        print("Failed to scale training data")
+        return
 
-        # Scale the training data
-        scaled_train_data, scaler = preprocess_data(all_data['close'].values, window_size, is_training=True)
-        if scaler is None:
-            print("Failed to scale training data")
-            return
+    # Create training data
+    X_train, y_train = create_train_data(scaled_train_data, window_size)
+    if X_train is None or y_train is None:
+        print("Failed to create training data")
+        return
 
-        # Train the model on historical data
-        model = train_model(scaled_train_data, window_size)
-        if model is None:
-            print("Failed to train model")
-            return
+    # Train the model on 2010-2021 4-hour data
+    model = train_lstm_model(X_train, y_train, window_size)
+    if model is None:
+        print("Failed to train model")
+        return
 
-        # Get the last close price from the training data
-        last_close = all_data.iloc[-1]['close']
-        last_date = all_data.iloc[-1]['time']
 
-        # Fetch actual price data for the prediction period (next 30 days or until next_relearn_date)
-        prediction_start_date = last_date + timedelta(hours=4)
-        prediction_end_date = min(next_relearn_date, prediction_start_date + timedelta(days=30))
-        actual_data = fetch_historical_data(mt5, symbol, timeframe, prediction_start_date, prediction_end_date)
+    # Get the last close price from the training data
+    last_close = all_data.iloc[-1]['close']
+    last_date = all_data.iloc[-1]['time']
 
-        if actual_data is None or len(actual_data) == 0:
-            print("Failed to fetch actual data for the prediction period. Aborting process.")
-            return
+    # Fetch actual price data for the prediction period (first 5 days of 2022)
+    prediction_start_date = last_date + timedelta(hours=4)
+    prediction_end_date = prediction_start_date + timedelta(days=5)
+    actual_data = fetch_historical_data(mt5, symbol, timeframe, prediction_start_date, prediction_end_date)
 
-        # Generate predictions for the same dates as actual data
-        predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size)
+    if actual_data is None or len(actual_data) == 0:
+        print("Failed to fetch actual data for the prediction period. Aborting process.")
+        return
 
-        # Extract model equation
-        weights = model.get_weights()
-        bias = weights[-1][0]
-        last_dense_weights = weights[-2]
-        equation = f"y = {bias:.4f}"
-        for i, w in enumerate(last_dense_weights):
-            equation += f" + {w[0]:.4f} * x{i+1}"
+    # Generate predictions for the same dates as actual data
+    predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size)
 
-        # Print predictions
-        print("\n4-Hour Predictions:")
-        for i, (pred_datetime, pred_close) in enumerate(zip(actual_data['time'], predictions)):
-            print(f"Date: {pred_datetime}, Predicted Close: ${pred_close[0]:.2f}")
+    # Extract model equation
+    weights = model.get_weights()
+    bias = weights[-1][0]
+    last_dense_weights = weights[-2]
+    equation = f"y = {bias:.4f}"
+    for i, w in enumerate(last_dense_weights):
+        equation += f" + {w[0]:.4f} * x{i+1}"
 
-        # Prepare data for Excel export
-        pred_df = pd.DataFrame({
-            'DateTime': actual_data['time'],
-            'Predicted_Close': predictions.flatten(),
-            'Actual_Close': actual_data['close'],
-            'Model_Equation': [equation] * len(actual_data)
-        })
-        pred_df.to_excel(f"4hour_predictions_report_{train_end_date.strftime('%Y%m%d')}.xlsx", index=False)
-        print(f"4-hour predictions exported to 4hour_predictions_report_{train_end_date.strftime('%Y%m%d')}.xlsx")
+    # Print predictions
+    print("\n4-Hour Predictions:")
+    for i, (pred_datetime, pred_close) in enumerate(zip(actual_data['time'], predictions)):
+        print(f"Date: {pred_datetime}, Predicted Close: ${pred_close[0]:.2f}")
 
-        # Plotting
-        plt.figure(figsize=(16, 8))
-        plt.plot(actual_data['time'], predictions, color='red', linewidth=2, label='Prediction')
-        plt.plot(actual_data['time'], actual_data['close'], color='green', linewidth=2, label='Actual Price')
-        plt.xlabel('Date and Time')
-        plt.ylabel('Price')
-        plt.title(f'{symbol} 4-Hour Price Prediction vs Actual (Starting from {prediction_start_date})')
-        plt.legend()
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.savefig(f'4hour_price_prediction_plot_{train_end_date.strftime("%Y%m%d")}.png')
-        plt.close()
-        print(f"4-hour price prediction plot saved as 4hour_price_prediction_plot_{train_end_date.strftime('%Y%m%d')}.png")
+    # Prepare data for Excel export
+    pred_df = pd.DataFrame({
+        'DateTime': actual_data['time'],
+        'Predicted_Close': predictions.flatten(),
+        'Actual_Close': actual_data['close'],
+        'Model_Equation': [equation] * len(actual_data)
+    })
+    pred_df.to_excel("4hour_predictions_report.xlsx", index=False)
+    print("4-hour predictions exported to 4hour_predictions_report.xlsx")
 
-        print(f"Next relearning scheduled for: {next_relearn_date}")
-
-        # Wait until it's time to relearn
-        while datetime.now() < next_relearn_date:
-            time.sleep(3600)  # Sleep for 1 hour
-
-        # Update the training data and prepare for the next iteration
-        train_end_date = next_relearn_date
-        next_relearn_date += relearn_interval
+    # Plotting
+    plt.figure(figsize=(16, 8))
+    plt.plot(actual_data['time'], predictions, color='red', linewidth=2, label='Prediction')
+    plt.plot(actual_data['time'], actual_data['close'], color='green', linewidth=2, label='Actual Price')
+    plt.xlabel('Date and Time')
+    plt.ylabel('Price')
+    plt.title(f'{symbol} 4-Hour Price Prediction vs Actual (Starting from {prediction_start_date})')
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig('4hour_price_prediction_plot.png')
+    plt.close()
+    print("4-hour price prediction plot saved as 4hour_price_prediction_plot.png")

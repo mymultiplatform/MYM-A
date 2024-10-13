@@ -1,3 +1,4 @@
 *.xlsx
 trades_report.xlsx
 *.pyc
+*.png
