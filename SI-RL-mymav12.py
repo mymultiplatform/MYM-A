@@ -31,6 +31,16 @@ class TradeRLModel(nn.Module):
         x = self.fc2(x)
         return x
 
+# Function to calculate the RSI
+def calculate_rsi(prices, period=14):
+    delta = np.diff(prices)
+    gain = np.where(delta > 0, delta, 0).mean()
+    loss = np.abs(np.where(delta < 0, delta, 0)).mean()
+    if loss == 0:
+        return 100  # Return maximum RSI if there's no loss
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 # Environment for the RL agent interacting with MT5
 class MT5Environment:
     def __init__(self):
@@ -48,12 +58,20 @@ class MT5Environment:
         # Historical market data for EURUSD (last 100 candles on M1 timeframe)
         rates = mt5.copy_rates_from_pos("EURUSD", mt5.TIMEFRAME_M1, 0, 100)
         close_prices = [rate['close'] for rate in rates]
-
+        
+        # Calculate price returns
+        returns = np.diff(close_prices) / close_prices[:-1]
+        mean_return = np.mean(returns) if len(returns) > 0 else 0
+        volatility = np.std(returns) if len(returns) > 0 else 0
+        
         # Latest bid/ask prices for EURUSD
         tick = mt5.symbol_info_tick("EURUSD")
         bid, ask = tick.bid, tick.ask
         
-        # State: [balance, number of trades, equity, last close price, mean close price, bid, ask]
+        # Calculate RSI
+        rsi = calculate_rsi(close_prices)
+        
+        # State: [balance, number of trades, equity, last close price, mean close price, bid, ask, RSI, mean return, volatility]
         state = [
             self.balance,
             open_trades,
@@ -61,7 +79,10 @@ class MT5Environment:
             close_prices[-1],  # Most recent close price
             np.mean(close_prices),  # Average of last 100 close prices
             bid,
-            ask
+            ask,
+            rsi,
+            mean_return,
+            volatility
         ]
         return torch.tensor(state, dtype=torch.float32)
     
@@ -98,7 +119,7 @@ class MT5Environment:
         mt5.order_send(request)
     
     def sell(self):
-        """Execute a sell order."""
+        """Execute a sell order."""        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": "EURUSD",
@@ -114,11 +135,11 @@ class MT5Environment:
         mt5.order_send(request)
     
     def get_reward(self):
-        """Calculate reward based on balance change."""
+        """Calculate reward based on balance change."""        
         return self.balance - self.initial_balance
     
     def reset(self):
-        """Reset the environment to its initial state."""
+        """Reset the environment to its initial state."""        
         self.balance = mt5.account_info().balance
         return self.get_state()
 
@@ -162,7 +183,7 @@ class TradeAgent:
 
 def train_agent():
     env = MT5Environment()
-    agent = TradeAgent(state_size=7, action_size=3)  # State: balance, trades, equity, prices, bid/ask
+    agent = TradeAgent(state_size=10, action_size=3)  # Updated state size
     episodes = 1000
     batch_size = 32
 
