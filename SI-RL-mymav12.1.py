@@ -108,7 +108,7 @@ class MT5Environment:
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": "EURUSD",
             "volume": 0.1,
-            "type": mt5.ORDER_BUY,
+            "type": mt5.ORDER_TYPE_BUY,  # Corrected constant
             "price": mt5.symbol_info_tick("EURUSD").ask,
             "deviation": 20,
             "magic": 234000,
@@ -124,7 +124,7 @@ class MT5Environment:
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": "EURUSD",
             "volume": 0.1,
-            "type": mt5.ORDER_SELL,
+            "type": mt5.ORDER_TYPE_SELL,  # Corrected constant
             "price": mt5.symbol_info_tick("EURUSD").bid,
             "deviation": 20,
             "magic": 234000,
@@ -173,11 +173,18 @@ class TradeAgent:
             target = reward
             with torch.no_grad():
                 target += self.gamma * torch.max(self.model(next_state)).item()
-            current_q = self.model(state)[action]
+            
+            # Ensure the Q-values are handled correctly for the chosen action
+            current_q_values = self.model(state)  # Get Q-values for all actions
+            current_q = current_q_values[0, action]  # Extract the Q-value for the specific action
+            
+            # Calculate the loss between the predicted Q-value and the target
             loss = self.criterion(current_q, torch.tensor([target]))
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+        
+        # Decay epsilon (exploration rate)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
