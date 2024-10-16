@@ -123,8 +123,8 @@ def train_lstm_model(X_train, y_train, window_size):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters())
     
-    epochs = 5000
-    patience = 300
+    epochs = 1000
+    patience = 400
     best_val_loss = float('inf')
     no_improve_epoch = 0
     
@@ -198,7 +198,7 @@ def run_trading_process():
     timeframe = mt5.TIMEFRAME_H4
     start_date = datetime(2010, 1, 4)
     train_end_date = datetime(2021, 12, 31, 20, 0)
-    window_size = 10
+    window_size = 1
 
     if not mt5.terminal_info().connected:
         print("Not connected to MetaTrader 5. Please check your connection.")
@@ -244,7 +244,7 @@ def run_trading_process():
 
  # Adjust these parameters for forex prediction
     mu = 0  # No drift
-    sigma = 0.000001  # Very low volatility
+    sigma = 0.0001  # Very low volatility
     dt = 1 / (252 * 6)  # Time step for 4-hour intervals, considering 252 trading days per year
 
     predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size, mu, sigma, dt)
