@@ -1,4 +1,4 @@
-# **Algotrader: LSTM-Based Algorithmic Trading Backtest**
+# **Algotrader: ML-Based Algorithmic Trading Backtest**
 
 ## **Table of Contents**
 1. [Project Description](#project-description)
