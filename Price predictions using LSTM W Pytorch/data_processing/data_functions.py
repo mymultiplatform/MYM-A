@@ -167,17 +167,25 @@ def predict_future(model, train_data, scaler, future_periods, window_size, mu, s
     predictions = []
     last_price = scaler.inverse_transform(input_seq[-1].reshape(-1, 1))[0][0]
     
-    for _ in range(future_periods):
+    for i in range(future_periods):
         input_seq_scaled = scaler.transform(input_seq.reshape(-1, 1))
         input_seq_tensor = torch.FloatTensor(input_seq_scaled).unsqueeze(0).to(device)
         with torch.no_grad():
             predicted_price = model(input_seq_tensor).item()
         
-        drift = (mu - 0.5 * sigma**2) * dt
-        diffusion = sigma * np.sqrt(dt) * np.random.normal(0, 1)
-        price_multiplier = np.exp(drift + diffusion)
+        # Check if it's a trading period (assuming 24/5 market)
+        is_trading_period = i % (6 * 5) < (6 * 5 - 6)  # Exclude weekends
         
-        stochastic_price = last_price * price_multiplier
+        if is_trading_period:
+            # Apply Geometric Brownian Motion for trading periods
+            drift = (mu - 0.5 * sigma**2) * dt
+            diffusion = sigma * np.sqrt(dt) * np.random.normal(0, 1)
+            price_multiplier = np.exp(drift + diffusion)
+            stochastic_price = last_price * price_multiplier
+        else:
+            # For non-trading periods, keep the price unchanged
+            stochastic_price = last_price
+
         predictions.append(stochastic_price)
         
         input_seq = np.append(input_seq[1:], stochastic_price)
@@ -234,10 +242,10 @@ def run_trading_process():
         print("Failed to fetch actual data for the prediction period. Aborting process.")
         return
 
-    # For PyTorch, we need to define these parameters
-    mu = 0  # drift
-    sigma = 0.01  # volatility
-    dt = 1/365  # time step (assuming daily data)
+ # Adjust these parameters for forex prediction
+    mu = 0  # No drift
+    sigma = 0.0001  # Very low volatility
+    dt = 1 / (252 * 6)  # Time step for 4-hour intervals, considering 252 trading days per year
 
     predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size, mu, sigma, dt)
 
