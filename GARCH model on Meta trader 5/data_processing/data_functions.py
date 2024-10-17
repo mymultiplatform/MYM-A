@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import time
 from metatrader.mt5_functions import get_mt5_timeframe, get_mt5_symbol_info
 import sys
+import io
+
 sys.setrecursionlimit(10000)  # Increase the limit to a higher value
 
 def fetch_mt5_data(symbol, timeframe, start_date, end_date):
@@ -136,7 +138,7 @@ def garch_analysis(symbol, timeframe_str):
     return prediction, datetime.now(), rolling_predictions, std_dev
 
 def start_garch_analysis():
-    symbol = "USDCHF"
+    symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_M15
     start_date = datetime.now() - timedelta(days=30)
     end_date = datetime.now()
@@ -157,6 +159,9 @@ def start_garch_analysis():
         # Perform GARCH analysis
         model_fit, forecasts = perform_garch_analysis(returns)
         
+        # Capture model summary as a string
+        model_summary = str(model_fit.summary())
+        
         # Perform rolling volatility forecast
         test_size = 100
         rolling_predictions = perform_rolling_volatility_forecast(returns, test_size)
@@ -173,4 +178,22 @@ def start_garch_analysis():
         std_dev = np.std(returns)
         print(f"Standard deviation of returns: {std_dev}")
         
-        print("GARCH analysis and rolling volatility forecast completed successfully.")
+        # Create a DataFrame with all statistics
+        stats_df = pd.DataFrame({
+            'Statistic': ['Mean', 'Median', 'Standard Deviation', 'Skewness', 'Kurtosis', 
+                          'Minimum', 'Maximum', '25th Percentile', '75th Percentile'],
+            'Value': [np.mean(returns), np.median(returns), std_dev, 
+                      pd.Series(returns).skew(), pd.Series(returns).kurtosis(),
+                      np.min(returns), np.max(returns), 
+                      np.percentile(returns, 25), np.percentile(returns, 75)]
+        })
+        
+        # Display the DataFrame
+        print("\nSummary Statistics:")
+        print(stats_df.to_string(index=False))
+        
+        print("\nGARCH analysis and rolling volatility forecast completed successfully.")
+        
+        # Print the model summary at the very end
+        print("\nGARCH Model Summary:")
+        print(model_summary)
