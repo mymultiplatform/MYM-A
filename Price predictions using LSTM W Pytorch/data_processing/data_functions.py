@@ -256,12 +256,8 @@ def run_trading_process():
         print("Failed to fetch actual data for the prediction period. Aborting process.")
         return
 
- # Adjust these parameters for forex prediction
-    mu = 0  # No drift
-    sigma = 0.01  # Very low volatility
-    dt = 1 / (252 * 6)  # Time step for 4-hour intervals, considering 252 trading days per year
 
-    predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size, mu, sigma, dt)
+    predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size)
 
     # Extract model equation (this part is different for PyTorch)
     last_layer = list(model.children())[-1]
