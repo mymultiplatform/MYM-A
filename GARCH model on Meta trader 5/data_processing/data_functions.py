@@ -9,6 +9,7 @@ import time
 from metatrader.mt5_functions import get_mt5_timeframe, get_mt5_symbol_info
 import sys
 sys.setrecursionlimit(10000)  # Increase the limit to a higher value
+
 def fetch_mt5_data(symbol, timeframe, start_date, end_date):
     """Fetch data from MetaTrader 5 for a specific date range"""
     print(f"Attempting to fetch {symbol} data from {start_date} to {end_date} on {timeframe} timeframe.")
@@ -47,6 +48,7 @@ def forecast_volatility(model_results, horizon=1):
     """Forecast volatility"""
     forecast = model_results.forecast(horizon=horizon)
     return np.sqrt(forecast.variance.values[-1, :])
+
 def perform_garch_analysis(returns, test_size=100):
     # Split data into train and test sets
     train, test = returns[:-test_size], returns[-test_size:]
@@ -70,6 +72,19 @@ def perform_garch_analysis(returns, test_size=100):
     print(model_fit.summary())
 
     return model_fit, forecasts
+
+def perform_rolling_volatility_forecast(returns, test_size=100, p=2, q=2):
+    """Perform rolling volatility forecast"""
+    rolling_predictions = []
+    for i in range(test_size):
+        train = returns[:-(test_size-i)]
+        model = arch_model(train, p=p, q=q)
+        model_fit = model.fit(disp='off')
+        pred = model_fit.forecast(horizon=1)
+        rolling_predictions.append(np.sqrt(pred.variance.values[-1,:][0]))
+    
+    return rolling_predictions
+
 def garch_analysis(symbol, timeframe_str):
     """Main function to run GARCH analysis"""
     timeframe = get_mt5_timeframe(timeframe_str)
@@ -103,7 +118,22 @@ def garch_analysis(symbol, timeframe_str):
     
     print(f"Predicted volatility for the next period: {prediction}")
     
-    return prediction, datetime.now()
+    # Perform rolling volatility forecast
+    test_size = 100
+    rolling_predictions = perform_rolling_volatility_forecast(returns, test_size)
+    
+    # Plot rolling volatility forecast
+    plt.figure(figsize=(10,4))
+    true, = plt.plot(returns[-test_size:])
+    preds, = plt.plot(rolling_predictions)
+    plt.title('Volatility Prediction - Rolling Forecast', fontsize=20)
+    plt.legend(['True Returns', 'Predicted Volatility'], fontsize=16)
+    plt.show()
+    
+    # Calculate standard deviation of returns
+    std_dev = returns.std()
+    
+    return prediction, datetime.now(), rolling_predictions, std_dev
 
 def start_garch_analysis():
     symbol = "USDCHF"
@@ -127,6 +157,20 @@ def start_garch_analysis():
         # Perform GARCH analysis
         model_fit, forecasts = perform_garch_analysis(returns)
         
-        print("GARCH analysis completed successfully.")
-    else:
-        print("Failed to fetch data from MetaTrader 5.")
+        # Perform rolling volatility forecast
+        test_size = 100
+        rolling_predictions = perform_rolling_volatility_forecast(returns, test_size)
+        
+        # Plot rolling volatility forecast
+        plt.figure(figsize=(10,4))
+        true, = plt.plot(returns[-test_size:])
+        preds, = plt.plot(rolling_predictions)
+        plt.title('Volatility Prediction - Rolling Forecast', fontsize=20)
+        plt.legend(['True Returns', 'Predicted Volatility'], fontsize=16)
+        plt.show()
+        
+        # Calculate and display standard deviation
+        std_dev = np.std(returns)
+        print(f"Standard deviation of returns: {std_dev}")
+        
+        print("GARCH analysis and rolling volatility forecast completed successfully.")
