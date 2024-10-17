@@ -149,47 +149,61 @@ def train_lstm_model(X_train, y_train, window_size):
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             no_improve_epoch = 0
-            torch.save(model.state_dict(), 'best_model.pth')
+            torch.save(model.state_dict(), r'C:\Users\cinco\Desktop\MYM-A\bestpaths\best_model.pth')
         else:
             no_improve_epoch += 1
             if no_improve_epoch >= patience:
                 print(f"Early stopping triggered at epoch {epoch}")
                 break
     
-    model.load_state_dict(torch.load('best_model.pth'))
+    model.load_state_dict(torch.load(r'C:\Users\cinco\Desktop\MYM-A\bestpaths\best_model.pth'))
     print("Model training completed.")
     return model
 
-def predict_future(model, train_data, scaler, future_periods, window_size, mu, sigma, dt):
+def predict_future(model, train_data, scaler, future_periods, window_size):
     device = next(model.parameters()).device
     model.eval()
     input_seq = train_data[-window_size:]
     predictions = []
+    
+    # Calculate historical volatility
+    returns = np.log(train_data[1:] / train_data[:-1])
+    historical_volatility = np.std(returns) * np.sqrt(252 * 6)  # Annualized volatility
+    
+    # Mean reversion parameters
+    long_term_mean = np.mean(train_data)
+    mean_reversion_speed = 0.1  # Adjust this value based on your observations
+    
     last_price = scaler.inverse_transform(input_seq[-1].reshape(-1, 1))[0][0]
     
     for i in range(future_periods):
         input_seq_scaled = scaler.transform(input_seq.reshape(-1, 1))
         input_seq_tensor = torch.FloatTensor(input_seq_scaled).unsqueeze(0).to(device)
         with torch.no_grad():
-            predicted_price = model(input_seq_tensor).item()
+            model_prediction = model(input_seq_tensor).item()
         
         # Check if it's a trading period (assuming 24/5 market)
         is_trading_period = i % (6 * 5) < (6 * 5 - 6)  # Exclude weekends
         
         if is_trading_period:
-            # Apply Geometric Brownian Motion for trading periods
-            drift = (mu - 0.5 * sigma**2) * dt
-            diffusion = sigma * np.sqrt(dt) * np.random.normal(0, 1)
-            price_multiplier = np.exp(drift + diffusion)
-            stochastic_price = last_price * price_multiplier
+            # Ornstein-Uhlenbeck process for mean reversion
+            drift = mean_reversion_speed * (long_term_mean - last_price)
+            volatility = historical_volatility * last_price
+            random_shock = np.random.normal(0, 1)
+            
+            price_change = drift + volatility * random_shock * np.sqrt(1 / (252 * 6))
+            stochastic_price = last_price + price_change
+            
+            # Combine model prediction with stochastic process
+            combined_price = 0.7 * stochastic_price + 0.3 * model_prediction
         else:
             # For non-trading periods, keep the price unchanged
-            stochastic_price = last_price
+            combined_price = last_price
 
-        predictions.append(stochastic_price)
+        predictions.append(combined_price)
         
-        input_seq = np.append(input_seq[1:], stochastic_price)
-        last_price = stochastic_price
+        input_seq = np.append(input_seq[1:], combined_price)
+        last_price = combined_price
 
     return np.array(predictions).reshape(-1, 1)
 
@@ -198,7 +212,7 @@ def run_trading_process():
     timeframe = mt5.TIMEFRAME_H4
     start_date = datetime(2010, 1, 4)
     train_end_date = datetime(2021, 12, 31, 20, 0)
-    window_size = 1
+    window_size = 10
 
     if not mt5.terminal_info().connected:
         print("Not connected to MetaTrader 5. Please check your connection.")
@@ -244,7 +258,7 @@ def run_trading_process():
 
  # Adjust these parameters for forex prediction
     mu = 0  # No drift
-    sigma = 0.0001  # Very low volatility
+    sigma = 0.01  # Very low volatility
     dt = 1 / (252 * 6)  # Time step for 4-hour intervals, considering 252 trading days per year
 
     predictions = predict_future(model, all_data['close'].values, scaler, len(actual_data), window_size, mu, sigma, dt)
