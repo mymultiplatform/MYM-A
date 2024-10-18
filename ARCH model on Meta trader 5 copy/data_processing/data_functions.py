@@ -9,7 +9,6 @@ import time
 from metatrader.mt5_functions import get_mt5_timeframe, get_mt5_symbol_info
 import sys
 import io
-from sklearn.model_selection import TimeSeriesSplit
 
 sys.setrecursionlimit(10000)  # Increase the limit to a higher value
 
@@ -42,9 +41,9 @@ def plot_pacf(series):
     plot_pacf(np.array(series)**2)
     plt.show()
 
-def fit_garch_model(returns, p=2, q=2):
-    """Fit GARCH(p,q) model"""
-    model = arch_model(returns, p=p, q=q)
+def fit_arch_model(returns, p=2):
+    """Fit ARCH(p) model"""
+    model = arch_model(returns, vol='ARCH', p=p)
     return model.fit(disp='off')
 
 def forecast_volatility(model_results, horizon=1):
@@ -52,28 +51,23 @@ def forecast_volatility(model_results, horizon=1):
     forecast = model_results.forecast(horizon=horizon)
     return np.sqrt(forecast.variance.values[-1, :])
 
-def perform_garch_analysis(returns, test_size=100):
-    # Convert returns to pandas Series if it's not already
-    if not isinstance(returns, pd.Series):
-        returns = pd.Series(returns)
-
+def perform_arch_analysis(returns, test_size=100):
     # Split data into train and test sets
-    train = returns[:-test_size]
-    test = returns[-test_size:]
+    train, test = returns[:-test_size], returns[-test_size:]
 
-    # Fit GARCH(1,1) model on train data only
-    model = arch_model(train, vol='Garch', p=1, q=1)
+    # Fit ARCH(1) model
+    model = arch_model(train, vol='ARCH', p=1)
     model_fit = model.fit(disp='off')
 
-    # Make predictions on test data
-    forecasts = model_fit.forecast(horizon=len(test))
+    # Make predictions
+    forecasts = model_fit.forecast(horizon=test_size)
     forecast_variance = np.sqrt(forecasts.variance.values[-1, :])
 
     # Plot results
     plt.figure(figsize=(10, 6))
-    plt.plot(test.index, test, label='Actual Returns')
-    plt.plot(test.index, forecast_variance, label='Predicted Volatility')
-    plt.title('GARCH(1,1) Volatility Forecast')
+    plt.plot(test, label='Actual Returns')
+    plt.plot(forecast_variance, label='Predicted Volatility')
+    plt.title('ARCH(1) Volatility Forecast')
     plt.legend()
     plt.show()
 
@@ -81,42 +75,20 @@ def perform_garch_analysis(returns, test_size=100):
 
     return model_fit, forecasts
 
-def tune_garch_parameters(returns, p_range=(1, 3), q_range=(1, 3), num_splits=5):
-    """Tune GARCH model parameters using cross-validation"""
-    best_aic = np.inf
-    best_params = None
-    tscv = TimeSeriesSplit(n_splits=num_splits)
-
-    for p in range(p_range[0], p_range[1] + 1):
-        for q in range(q_range[0], q_range[1] + 1):
-            aic_scores = []
-            for train_index, val_index in tscv.split(returns):
-                train, val = returns.iloc[train_index], returns.iloc[val_index]
-                model = arch_model(train, vol='Garch', p=p, q=q)
-                results = model.fit(disp='off')
-                aic_scores.append(results.aic)
-            avg_aic = np.mean(aic_scores)
-            if avg_aic < best_aic:
-                best_aic = avg_aic
-                best_params = (p, q)
-
-    print(f"Best GARCH parameters: p={best_params[0]}, q={best_params[1]}")
-    return best_params
-
-def perform_rolling_volatility_forecast(returns, test_size=100, p=2, q=2):
+def perform_rolling_volatility_forecast(returns, test_size=100, p=2):
     """Perform rolling volatility forecast"""
     rolling_predictions = []
     for i in range(test_size):
         train = returns[:-(test_size-i)]
-        model = arch_model(train, p=p, q=q)
+        model = arch_model(train, vol='ARCH', p=p)
         model_fit = model.fit(disp='off')
         pred = model_fit.forecast(horizon=1)
         rolling_predictions.append(np.sqrt(pred.variance.values[-1,:][0]))
     
     return rolling_predictions
 
-def garch_analysis(symbol, timeframe_str):
-    """Main function to run GARCH analysis"""
+def arch_analysis(symbol, timeframe_str):
+    """Main function to run ARCH analysis"""
     timeframe = get_mt5_timeframe(timeframe_str)
     
     # Define date range for the last 30 days
@@ -139,11 +111,8 @@ def garch_analysis(symbol, timeframe_str):
     # Plot PACF
     plot_pacf(returns)
     
-    # Tune GARCH parameters
-    best_p, best_q = tune_garch_parameters(returns)
-    
-    # Fit GARCH model on the data with best parameters
-    model_fit = fit_garch_model(returns, p=best_p, q=best_q)
+    # Fit ARCH model on the data
+    model_fit = fit_arch_model(returns)
     print(model_fit.summary())
     
     # Predict volatility for the next period
@@ -153,7 +122,7 @@ def garch_analysis(symbol, timeframe_str):
     
     # Perform rolling volatility forecast
     test_size = 100
-    rolling_predictions = perform_rolling_volatility_forecast(returns, test_size, p=best_p, q=best_q)
+    rolling_predictions = perform_rolling_volatility_forecast(returns, test_size)
     
     # Plot rolling volatility forecast
     plt.figure(figsize=(10,4))
@@ -168,7 +137,7 @@ def garch_analysis(symbol, timeframe_str):
     
     return prediction, datetime.now(), rolling_predictions, std_dev
 
-def start_garch_analysis():
+def start_arch_analysis():
     symbol = "BTCUSD"
     timeframe = mt5.TIMEFRAME_M15
     start_date = datetime.now() - timedelta(days=30)
@@ -187,8 +156,8 @@ def start_garch_analysis():
         # Calculate returns
         returns = 100 * np.log(close_prices[1:] / close_prices[:-1])
         
-        # Perform GARCH analysis
-        model_fit, forecasts = perform_garch_analysis(returns)
+        # Perform ARCH analysis
+        model_fit, forecasts = perform_arch_analysis(returns)
         
         # Capture model summary as a string
         model_summary = str(model_fit.summary())
@@ -223,8 +192,8 @@ def start_garch_analysis():
         print("\nSummary Statistics:")
         print(stats_df.to_string(index=False))
         
-        print("\nGARCH analysis and rolling volatility forecast completed successfully.")
+        print("\nARCH analysis and rolling volatility forecast completed successfully.")
         
         # Print the model summary at the very end
-        print("\nGARCH Model Summary:")
+        print("\nARCH Model Summary:")
         print(model_summary)
