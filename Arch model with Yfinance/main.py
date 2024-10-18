@@ -1,6 +1,6 @@
 import yfinance as yf
 from datetime import datetime, timedelta
-from garch_analysis import garch_analysis, perform_garch_analysis, perform_rolling_volatility_forecast
+from arch_analysis import arch_analysis, perform_arch_analysis, perform_rolling_volatility_forecast
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ def get_valid_stock_symbol():
             print(f"Error: {e}. Please try another symbol.")
 
 def main():
-    print("Welcome to the GARCH Analysis Tool")
+    print("Welcome to the ARCH Analysis Tool")
 
     symbol = get_valid_stock_symbol()
 
@@ -35,8 +35,8 @@ def main():
         print(f"Failed to fetch data for {symbol}")
         return
 
-    # Perform GARCH analysis
-    model_fit, rolling_forecasts, actual_next_5_days, forecast_dates, returns = garch_analysis(data)
+    # Perform ARCH analysis
+    model_fit, rolling_forecasts, actual_next_5_days, forecast_dates, returns = arch_analysis(data)
 
     # Plot results
     plt.figure(figsize=(12, 8))
@@ -49,7 +49,7 @@ def main():
     plt.subplot(2, 1, 2)
     plt.plot(forecast_dates, np.abs(actual_next_5_days), label='Actual Volatility', alpha=0.5)
     plt.plot(forecast_dates, rolling_forecasts, label='Predicted Volatility', color='red')
-    plt.title('GARCH Volatility Forecast (Rolling 5-day)')
+    plt.title('ARCH Volatility Forecast (Rolling 5-day)')
     plt.xlabel('Date')
     plt.ylabel('Volatility')
     plt.legend()
@@ -71,7 +71,7 @@ def main():
     print(stats_df.to_string(index=False))
 
     # Print model summary
-    print("\nGARCH Model Summary:")
+    print("\nARCH Model Summary:")
     print(model_fit.summary())
 
 if __name__ == "__main__":
