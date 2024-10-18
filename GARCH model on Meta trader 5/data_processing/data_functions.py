@@ -10,6 +10,7 @@ from metatrader.mt5_functions import get_mt5_timeframe, get_mt5_symbol_info
 import sys
 import io
 from sklearn.model_selection import TimeSeriesSplit
+from statsmodels.graphics.tsaplots import plot_pacf as statsmodels_plot_pacf
 
 sys.setrecursionlimit(10000)  # Increase the limit to a higher value
 
@@ -39,7 +40,9 @@ def plot_data(series, title):
 
 def plot_pacf(series):
     """Plot PACF of squared returns"""
-    plot_pacf(np.array(series)**2)
+    plt.figure(figsize=(10, 4))
+    statsmodels_plot_pacf(np.array(series)**2, lags=40)
+    plt.title("PACF of Squared Returns")
     plt.show()
 
 def fit_garch_model(returns, p=2, q=2):
@@ -115,116 +118,110 @@ def perform_rolling_volatility_forecast(returns, test_size=100, p=2, q=2):
     
     return rolling_predictions
 
-def garch_analysis(symbol, timeframe_str):
-    """Main function to run GARCH analysis"""
+
+def garch_analysis(symbol, timeframe_str, train_start, train_end, test_start, test_end):
+    """Main function to run GARCH analysis with rolling 5-day forecast"""
     timeframe = get_mt5_timeframe(timeframe_str)
     
-    # Define date range for the last 30 days
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=30)
-    
-    # Fetch data for the last 30 days
-    df = fetch_mt5_data(symbol, timeframe, start_date, end_date)
-    if df is None:
+    # Fetch all data from train_start to test_end
+    all_data = fetch_mt5_data(symbol, timeframe, train_start, test_end)
+    if all_data is None:
         print("Failed to fetch data. Exiting analysis.")
         return None
     
-    # Calculate returns
-    returns = calculate_returns(df['close'])
+    # Calculate returns for all data
+    all_returns = calculate_returns(all_data['close'])
     
-    # Plot data
-    plot_data(df['close'], f'Last 30 Days Data: {symbol} ({timeframe_str})')
-    plot_data(returns, f'Last 30 Days Returns: {symbol} ({timeframe_str})')
+    # Split into train and test
+    train_returns = all_returns[all_returns.index < test_start]
+    test_returns = all_returns[all_returns.index >= test_start]
     
-    # Plot PACF
-    plot_pacf(returns)
+    # Tune GARCH parameters using training data
+    best_p, best_q = tune_garch_parameters(train_returns)
     
-    # Tune GARCH parameters
-    best_p, best_q = tune_garch_parameters(returns)
+    # Perform rolling forecast
+    forecast_horizon = 5  # Forecast 5 steps ahead
+    rolling_forecasts = []
+    actual_next_5_days = []
     
-    # Fit GARCH model on the data with best parameters
-    model_fit = fit_garch_model(returns, p=best_p, q=best_q)
-    print(model_fit.summary())
+    for i in range(0, len(test_returns) - forecast_horizon, forecast_horizon):
+        train = all_returns[:len(train_returns) + i]
+        model = arch_model(train, p=best_p, q=best_q)
+        model_fit = model.fit(disp='off')
+        forecast = model_fit.forecast(horizon=forecast_horizon)
+        rolling_forecasts.extend(np.sqrt(forecast.variance.values[-1, :]))
+        actual_next_5_days.extend(test_returns[i:i+forecast_horizon])
     
-    # Predict volatility for the next period
-    prediction = forecast_volatility(model_fit)[0]
+    # Trim forecasts and actuals to match
+    min_len = min(len(rolling_forecasts), len(actual_next_5_days))
+    rolling_forecasts = rolling_forecasts[:min_len]
+    actual_next_5_days = actual_next_5_days[:min_len]
     
-    print(f"Predicted volatility for the next period: {prediction}")
+    # Create date range for x-axis
+    forecast_dates = test_returns.index[:min_len]
     
-    # Perform rolling volatility forecast
-    test_size = 100
-    rolling_predictions = perform_rolling_volatility_forecast(returns, test_size, p=best_p, q=best_q)
-    
-    # Plot rolling volatility forecast
-    plt.figure(figsize=(10,4))
-    true, = plt.plot(returns[-test_size:])
-    preds, = plt.plot(rolling_predictions)
-    plt.title('Volatility Prediction - Rolling Forecast', fontsize=20)
-    plt.legend(['True Returns', 'Predicted Volatility'], fontsize=16)
+    # Plot results
+    plt.figure(figsize=(12, 6))
+    plt.plot(forecast_dates, np.abs(actual_next_5_days), label='Actual Volatility', alpha=0.5)
+    plt.plot(forecast_dates, rolling_forecasts, label='Predicted Volatility', color='red')
+    plt.title('GARCH Volatility Forecast (Rolling 5-day)')
+    plt.legend()
+    plt.xlabel('Date')
+    plt.ylabel('Volatility')
     plt.show()
     
-    # Calculate standard deviation of returns
-    std_dev = returns.std()
+    # Calculate error metrics
+    mse = np.mean((np.array(rolling_forecasts) - np.abs(actual_next_5_days))**2)
+    rmse = np.sqrt(mse)
+    mae = np.mean(np.abs(np.array(rolling_forecasts) - np.abs(actual_next_5_days)))
     
-    return prediction, datetime.now(), rolling_predictions, std_dev
-
+    print(f"Mean Squared Error: {mse}")
+    print(f"Root Mean Squared Error: {rmse}")
+    print(f"Mean Absolute Error: {mae}")
+    
+    return model_fit, rolling_forecasts, actual_next_5_days, forecast_dates
 def start_garch_analysis():
     symbol = "BTCUSD"
-    timeframe = mt5.TIMEFRAME_M15
-    start_date = datetime.now() - timedelta(days=30)
-    end_date = datetime.now()
+    timeframe = mt5.TIMEFRAME_D1  # Using daily timeframe
 
-    # Fetch data from MT5
-    rates = mt5.copy_rates_range(symbol, timeframe, start_date, end_date)
+    # Define date ranges
+    train_start = datetime(2020, 1, 1)
+    train_end = datetime(2022, 12, 31)
+    test_start = datetime(2023, 1, 1)
+    test_end = datetime.now() - timedelta(days=1)  # Yesterday
+
+    # Perform GARCH analysis
+    model_fit, forecasts, train_std_dev, test_std_dev = garch_analysis(symbol, "D1", train_start, train_end, test_start, test_end)
     
-    if rates is not None and len(rates) > 0:
-        # Convert rates to numpy array
-        rates_array = np.array(rates)
-        
-        # Extract close prices
-        close_prices = rates_array['close']
-        
-        # Calculate returns
-        returns = 100 * np.log(close_prices[1:] / close_prices[:-1])
-        
-        # Perform GARCH analysis
-        model_fit, forecasts = perform_garch_analysis(returns)
-        
+    if model_fit is not None:
         # Capture model summary as a string
         model_summary = str(model_fit.summary())
         
-        # Perform rolling volatility forecast
-        test_size = 100
-        rolling_predictions = perform_rolling_volatility_forecast(returns, test_size)
-        
-        # Plot rolling volatility forecast
-        plt.figure(figsize=(10,4))
-        true, = plt.plot(returns[-test_size:])
-        preds, = plt.plot(rolling_predictions)
-        plt.title('Volatility Prediction - Rolling Forecast', fontsize=20)
-        plt.legend(['True Returns', 'Predicted Volatility'], fontsize=16)
-        plt.show()
-        
-        # Calculate and display standard deviation
-        std_dev = np.std(returns)
-        print(f"Standard deviation of returns: {std_dev}")
-        
         # Create a DataFrame with all statistics
+        train_returns = calculate_returns(fetch_mt5_data(symbol, timeframe, train_start, train_end)['close'])
+        test_returns = calculate_returns(fetch_mt5_data(symbol, timeframe, test_start, test_end)['close'])
+        
         stats_df = pd.DataFrame({
             'Statistic': ['Mean', 'Median', 'Standard Deviation', 'Skewness', 'Kurtosis', 
                           'Minimum', 'Maximum', '25th Percentile', '75th Percentile'],
-            'Value': [np.mean(returns), np.median(returns), std_dev, 
-                      pd.Series(returns).skew(), pd.Series(returns).kurtosis(),
-                      np.min(returns), np.max(returns), 
-                      np.percentile(returns, 25), np.percentile(returns, 75)]
+            'Training Value': [train_returns.mean(), train_returns.median(), train_std_dev, 
+                               train_returns.skew(), train_returns.kurtosis(),
+                               train_returns.min(), train_returns.max(), 
+                               train_returns.quantile(0.25), train_returns.quantile(0.75)],
+            'Testing Value': [test_returns.mean(), test_returns.median(), test_std_dev, 
+                              test_returns.skew(), test_returns.kurtosis(),
+                              test_returns.min(), test_returns.max(), 
+                              test_returns.quantile(0.25), test_returns.quantile(0.75)]
         })
         
         # Display the DataFrame
         print("\nSummary Statistics:")
         print(stats_df.to_string(index=False))
         
-        print("\nGARCH analysis and rolling volatility forecast completed successfully.")
+        print("\nGARCH analysis and volatility forecast completed successfully.")
         
         # Print the model summary at the very end
         print("\nGARCH Model Summary:")
         print(model_summary)
+    else:
+        print("GARCH analysis failed.")
