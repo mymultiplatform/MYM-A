@@ -189,7 +189,7 @@ def start_garch_analysis():
     # Define date ranges
     train_start = datetime(2020, 1, 1)
     train_end = datetime(2022, 12, 31)
-    test_start = datetime(2023, 1, 1)
+    test_start = datetime(2024, 10, 1)
     test_end = datetime.now() - timedelta(days=1)  # Yesterday
 
     # Perform GARCH analysis
