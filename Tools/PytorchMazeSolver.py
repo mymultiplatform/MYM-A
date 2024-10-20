@@ -114,15 +114,22 @@ def draw_maze_with_agent(maze, all_agent_paths):
                 plt.fill([x, x+1, x+1, x], [y, y, y+1, y+1], 'black')
 
     # Draw start and end points
-    plt.fill([1, 2, 2, 1], [0, 0, 1, 1], 'green', alpha=0.5)
-    plt.fill([width-1, width, width, width-1], [height-2, height-2, height-1, height-1], 'red', alpha=0.5)
+    plt.fill([1, 2, 2, 1], [0, 0, 1, 1], 'green', alpha=0.5)  # Start point
+    plt.fill([width-1, width, width, width-1], [height-2, height-2, height-1, height-1], 'red', alpha=0.5)  # End point
 
-    # Draw agent paths
+    # Draw agent paths with gradual animation
     for path in all_agent_paths:
-        path_x = [x for x, y in path]
-        path_y = [y for x, y in path]
-        plt.plot(path_x, path_y, 'b-', alpha=0.3)
-        plt.pause(0.1)
+        for position in path:
+            plt.plot(position[0] + 0.5, position[1] + 0.5, 'bo', markersize=8)  # Draw the agent
+            plt.pause(0.2)  # Pause for a longer time to slow down the animation
+            plt.clf()  # Clear previous plot to update the agent's position
+            # Redraw maze and start/end points for each step
+            for y in range(height):
+                for x in range(width):
+                    if maze[y][x] == '#':
+                        plt.fill([x, x+1, x+1, x], [y, y, y+1, y+1], 'black')
+            plt.fill([1, 2, 2, 1], [0, 0, 1, 1], 'green', alpha=0.5)
+            plt.fill([width-1, width, width, width-1], [height-2, height-2, height-1, height-1], 'red', alpha=0.5)
 
     plt.show()
 
