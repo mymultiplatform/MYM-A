@@ -123,7 +123,7 @@ def train_lstm_model(X_train, y_train, window_size):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters())
     
-    epochs = 1000
+    epochs = 100
     patience = 400
     best_val_loss = float('inf')
     no_improve_epoch = 0

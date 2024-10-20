@@ -183,8 +183,8 @@ def garch_analysis(symbol, timeframe_str, train_start, train_end, test_start, te
     
     return model_fit, rolling_forecasts, actual_next_5_days, forecast_dates
 def start_garch_analysis():
-    symbol = "BTCUSD"
-    timeframe = mt5.TIMEFRAME_D1  # Using daily timeframe
+    symbol = "NVDA_CFD.US"
+    timeframe = mt5.TIMEFRAME_H4  # Using daily timeframe
 
     # Define date ranges
     train_start = datetime(2020, 1, 1)
