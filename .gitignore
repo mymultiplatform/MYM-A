@@ -4,3 +4,4 @@ trades_report.xlsx
 *.png
 *.env
 databento_data
+*csv
