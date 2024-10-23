@@ -2,3 +2,5 @@
 trades_report.xlsx
 *.pyc
 *.png
+*.env
+databento_data
