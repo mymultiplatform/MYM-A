@@ -15,14 +15,23 @@ from utils.preprocessing import add_technical_features
 from utils.visualization import create_price_plot
 from training.trainer import train_model
 from sklearn.preprocessing import MinMaxScaler  # For data_scaler
-from torch.utils.data import DataLoader        # For DataLoader
-import torch.nn as nn                          # For nn.MSELoss()
-import torch.optim as optim                    # For optim.Adam()
+from torch.utils.data import DataLoader  # For DataLoader
+import torch.nn as nn  # For nn.MSELoss()
+import torch.optim as optim  # For optim.Adam()
+
+
+
 def main():
+    # Initialize configuration
+    start_date = "2018-05-02T08:44:39.292071841Z"
+    end_date = "2018-05-18T09:27:27.555026009Z"
+    Config.set_date_range(start_date, end_date)
+    
     # Set random seeds for reproducibility
     torch.manual_seed(Config.RANDOM_SEED)
     np.random.seed(Config.RANDOM_SEED)
     
+    # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.backends.cudnn.benchmark = True
     print(f"Using device: {device}")
@@ -30,13 +39,11 @@ def main():
     # Load and process training data
     train_data = []
     csv_files = glob.glob(str(Path(Config.DATA_DIR) / "*.csv"))
-    
     if not csv_files:
         raise ValueError(f"No CSV files found in directory: {Config.DATA_DIR}")
     
     print(f"Found {len(csv_files)} CSV files")
     print("Processing training data...")
-    
     for file in tqdm(csv_files):
         df = process_csv_file(file, Config.TRAIN_START_DATE, Config.TRAIN_END_DATE)
         if not df.empty:
@@ -54,7 +61,6 @@ def main():
     # Load and process test data
     test_data = []
     print("Processing test data...")
-    
     for file in tqdm(csv_files):
         df = process_csv_file(file, Config.TEST_START_DATE, Config.TEST_END_DATE)
         if not df.empty:
@@ -75,16 +81,16 @@ def main():
     print(f"Training date range: {train_df.index.min()} to {train_df.index.max()}")
     print(f"Test data shape: {test_df.shape}")
     print(f"Test date range: {test_df.index.min()} to {test_df.index.max()}")
-
+    
     # Combine data for feature engineering
     full_df = pd.concat([train_df, test_df])
-    full_df = full_df.resample('1min').last().ffill()    
+    full_df = full_df.resample('1min').last().ffill()
     full_df = full_df.sort_index()
-
+    
     print("\nFull dataset shape:", full_df.shape)
     print(f"Full date range: {full_df.index.min()} to {full_df.index.max()}")
-    
     print("Resampling to minute intervals...")
+    
     actual_data = pd.DataFrame({
         'timestamp': full_df.index,
         'actual_price': full_df['price']
@@ -105,14 +111,18 @@ def main():
     
     # Create datasets
     train_size = int(Config.TRAIN_VAL_SPLIT * len(train_data))
-    train_dataset = TimeSeriesDataset(train_data[:train_size], 
-                                    Config.SEQUENCE_LENGTH, 
-                                    Config.PREDICTION_LENGTH, 
-                                    data_scaler)
-    val_dataset = TimeSeriesDataset(train_data[train_size:], 
-                                  Config.SEQUENCE_LENGTH, 
-                                  Config.PREDICTION_LENGTH, 
-                                  data_scaler)
+    train_dataset = TimeSeriesDataset(
+        train_data[:train_size],
+        Config.SEQUENCE_LENGTH,
+        Config.PREDICTION_LENGTH,
+        data_scaler
+    )
+    val_dataset = TimeSeriesDataset(
+        train_data[train_size:],
+        Config.SEQUENCE_LENGTH,
+        Config.PREDICTION_LENGTH,
+        data_scaler
+    )
     
     # Create data loaders
     train_loader = DataLoader(
@@ -123,7 +133,6 @@ def main():
         pin_memory=True,
         persistent_workers=True
     )
-    
     val_loader = DataLoader(
         val_dataset,
         batch_size=Config.BATCH_SIZE,
@@ -146,11 +155,8 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
     
     print(f"Starting training for {Config.EPOCHS} epochs...")
-    train_model(model, train_loader, val_loader, criterion, optimizer, 
-                Config.EPOCHS, device, Config.PATIENCE)
+    train_model(model, train_loader, val_loader, criterion, optimizer, Config.EPOCHS, device, Config.PATIENCE)
     
-# [Previous code remains the same until the prediction generation part]
-
     print("Generating predictions...")
     model.load_state_dict(torch.load('best_model.pth'))
     model.eval()
@@ -169,8 +175,8 @@ def main():
     # Create timestamps for predictions
     last_timestamp = pd.Timestamp(Config.TEST_END_DATE)
     pred_index = pd.date_range(
-        start=last_timestamp, 
-        periods=Config.PREDICTION_LENGTH + 1, 
+        start=last_timestamp,
+        periods=Config.PREDICTION_LENGTH + 1,
         freq='1T'
     )[1:]
     
@@ -182,24 +188,39 @@ def main():
     
     # Get the actual prices for comparison
     last_actual_prices = actual_data[
-        (actual_data['timestamp'] <= last_timestamp) & 
+        (actual_data['timestamp'] <= last_timestamp) &
         (actual_data['timestamp'] > last_timestamp - pd.Timedelta(minutes=Config.PREDICTION_LENGTH))
     ].copy()
-    
     last_actual_prices = last_actual_prices.rename(columns={'actual_price': 'price'})
     
-    # Create comparison DataFrame by concatenating along the index
+    # Load extended actual data for visualization
+    extended_actual_data = []
+    print("\nProcessing extended actual data...")
+    extended_end_date = "2018-05-18T23:59:43.279929697Z"
+    for file in csv_files:
+        df = process_csv_file(file, Config.TEST_END_DATE, extended_end_date)
+        if not df.empty:
+            extended_actual_data.append(df)
+    
+    if extended_actual_data:
+        extended_actual_df = pd.concat(extended_actual_data)
+        extended_actual_df = extended_actual_df.sort_index()
+        extended_actual_df = extended_actual_df.resample('1min').last().ffill()
+    else:
+        extended_actual_df = None
+        print("No extended actual data found")
+    
+    # Create comparison DataFrame
     comparison_df = pd.concat(
         [last_actual_prices, predictions_df],
         axis=0,
         ignore_index=True
     ).sort_values('timestamp').reset_index(drop=True)
     
-    # Add a type column to distinguish between actual and predicted values
     comparison_df['type'] = 'predicted'
     comparison_df.loc[comparison_df['timestamp'] <= last_timestamp, 'type'] = 'actual'
     
-    # Create separate DataFrames for saving
+    # Save predictions and comparison data
     predictions_to_save = predictions_df.copy()
     predictions_to_save = predictions_to_save.rename(columns={'price': 'predicted_price'})
     predictions_to_save.to_csv('price_predictions.csv', index=False)
@@ -215,7 +236,7 @@ def main():
     print("Comparison data saved to price_comparison.csv")
     
     # Create and save the plot
-    plot_path = create_price_plot(comparison_df, last_timestamp)
+    plot_path = create_price_plot(comparison_df, last_timestamp, extended_actual_df)
     print(f"Price prediction plot saved to {plot_path}")
     
     # Calculate statistics
@@ -241,9 +262,11 @@ def main():
         print(f"Root Mean Squared Error: {rmse:.4f}")
         print(f"Mean Absolute Error: {mae:.4f}")
         print(f"Mean Absolute Percentage Error: {mape:.2f}%")
+        
         # Optional: Check for overlap
         if not (train_df.index.max() < test_df.index.min()):
             warnings.warn("Warning: Overlap detected between training and test data!")
+        
         # Additional analysis
         print("\nPrice Range Analysis:")
         print(f"Actual Price Range: {np.min(actual_values):.2f} to {np.max(actual_values):.2f}")
@@ -262,7 +285,6 @@ def main():
             'absolute_error': np.abs(actual_values - predicted_values),
             'percentage_error': np.abs((actual_values - predicted_values) / actual_values) * 100
         })
-        
         stats_df.to_csv('prediction_statistics.csv', index=False)
         print("\nDetailed statistics saved to prediction_statistics.csv")
     else:
