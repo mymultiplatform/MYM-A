@@ -12,7 +12,7 @@ class Config:
     HIDDEN_SIZE = 256
     NUM_LAYERS = 3
     LEARNING_RATE = 0.001
-    EPOCHS =   # Increased from 30 to 100
+    EPOCHS = 1# Increased from 30 to 100
     PATIENCE = 50  # Early stopping patience
     
     # Training parameters
