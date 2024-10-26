@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import messagebox
 import MetaTrader5 as mt5
@@ -82,7 +83,13 @@ def connect_to_mt5(login, password, server, root):
         return
 
     # Log in to the MetaTrader 5 account
-    authorized = mt5.login(login=int(login), password=password, server=server)
+    try:
+        authorized = mt5.login(login=int(login), password=password, server=server)
+    except Exception as e:
+        messagebox.showerror("Error", f"Login failed: {e}")
+        mt5.shutdown()
+        return
+
     if authorized:
         print("Connected to MetaTrader 5")
         display_account_info(root)
@@ -139,10 +146,10 @@ def fetch_and_display_chart(root):
         messagebox.showerror("Error", "Failed to preprocess data")
         return
 
-    # Train the LSTM model
-    lstm_model = train_lstm_model(scaled_data)
+    # Load or train the LSTM model
+    lstm_model = load_or_train_lstm_model(scaled_data)
     if lstm_model is None:
-        messagebox.showerror("Error", "Failed to train LSTM model")
+        messagebox.showerror("Error", "Failed to load or train LSTM model")
         return
 
     # Predict the future prices using LSTM
@@ -194,7 +201,31 @@ def preprocess_data(data):
     scaled_data = scaler.fit_transform(data)
     return scaled_data, scaler
 
-def train_lstm_model(scaled_data):
+def load_or_train_lstm_model(scaled_data):
+    trained_model_dir = os.path.join(os.getcwd(), "trainedmodel")
+    os.makedirs(trained_model_dir, exist_ok=True)  # Create folder if it doesn't exist
+
+    model_file = os.path.join(trained_model_dir, "LSTMfile.pth")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if os.path.exists(model_file):
+        try:
+            # Initialize the model architecture
+            model = LSTMModel(input_size=1, hidden_size=100, num_layers=2, output_size=1).to(device)
+            model.load_state_dict(torch.load(model_file, map_location=device))
+            model.eval()
+            print("Loaded pre-trained LSTM model.")
+            return model
+        except Exception as e:
+            print(f"Failed to load the model. Reason: {e}")
+            return None
+    else:
+        print("Pre-trained model not found. Training a new model...")
+        model = train_lstm_model(scaled_data, model_file, device)
+        return model
+
+def train_lstm_model(scaled_data, model_file, device):
     window_size = 60
     X_train, y_train = create_train_data(scaled_data, window_size)
     if X_train.size == 0 or y_train.size == 0:
@@ -203,8 +234,6 @@ def train_lstm_model(scaled_data):
 
     # Debugging: Print shapes
     print(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     X_train = torch.FloatTensor(X_train).to(device)
     y_train = torch.FloatTensor(y_train).to(device)
@@ -224,6 +253,14 @@ def train_lstm_model(scaled_data):
 
         # Debugging: Print loss
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.6f}")
+
+    # Save the trained model
+    try:
+        torch.save(model.state_dict(), model_file)
+        print(f"Model trained and saved to {model_file}")
+    except Exception as e:
+        print(f"Failed to save the model. Reason: {e}")
+        return None
 
     return model
 
@@ -296,9 +333,13 @@ def fit_garch_model(returns):
         return None
 
 def forecast_volatility(model_fit, horizon):
-    forecast = model_fit.forecast(horizon=horizon)
-    volatility = np.sqrt(forecast.variance.values[-1, :])
-    return volatility
+    try:
+        forecast = model_fit.forecast(horizon=horizon)
+        volatility = np.sqrt(forecast.variance.values[-1, :])
+        return volatility
+    except Exception as e:
+        print(f"Volatility forecasting failed: {e}")
+        return np.zeros(horizon)
 
 def combine_predictions(lstm_preds, garch_volatility):
     # Ensure the lengths match
