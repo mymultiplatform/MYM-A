@@ -33,25 +33,31 @@ def main():
 
     login_entry = tk.Entry(login_frame, font=("Helvetica", 14))
     login_entry.pack(pady=5)
-    login_entry.insert(0, "312128713")  # Pre-fill with your login
+    login_entry.insert(0, "")  # Leave empty for user input
 
     password_label = tk.Label(login_frame, text="Password:", font=("Helvetica", 14), bg="lightgrey")
     password_label.pack(pady=5)
 
     password_entry = tk.Entry(login_frame, show="*", font=("Helvetica", 14))
     password_entry.pack(pady=5)
-    password_entry.insert(0, "Sexo247420@")  # Pre-fill with your password
+    password_entry.insert(0, "")  # Leave empty for user input
 
     server_label = tk.Label(login_frame, text="Server:", font=("Helvetica", 14), bg="lightgrey")
     server_label.pack(pady=5)
 
     server_entry = tk.Entry(login_frame, font=("Helvetica", 14))
     server_entry.pack(pady=5)
-    server_entry.insert(0, "XMGlobal-MT5 7")  # Pre-fill with your server
+    server_entry.insert(0, "")  # Leave empty for user input
 
     # Connect button
-    connect_button = tk.Button(login_frame, text="Connect", font=("Helvetica", 14),
-                               command=lambda: connect_to_mt5(login_entry.get(), password_entry.get(), server_entry.get(), root))
+    connect_button = tk.Button(
+        login_frame,
+        text="Connect",
+        font=("Helvetica", 14),
+        command=lambda: connect_to_mt5(
+            login_entry.get(), password_entry.get(), server_entry.get(), root
+        ),
+    )
     connect_button.pack(pady=20)
 
     # Create a frame for the main content
@@ -104,7 +110,7 @@ def display_account_info(root):
         f"Equity: {account_info.equity}",
         f"Margin: {account_info.margin}",
         f"Free Margin: {account_info.margin_free}",
-        f"Leverage: {account_info.leverage}"
+        f"Leverage: {account_info.leverage}",
     ]
 
     for info in info_labels:
@@ -116,10 +122,11 @@ def fetch_and_display_chart(root):
     timeframe = mt5.TIMEFRAME_D1
 
     # Dates for historical data
-    end_date = datetime(2024, 10, 26)
-    start_date = datetime(2024, 9, 15)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)  # Increased to 365 days
     prediction_start_date = end_date
-    prediction_end_date = end_date + timedelta(days=40)  # Predict 40 days into the future
+    future_days = 40  # Predict 40 days into the future
+    prediction_end_date = end_date + timedelta(days=future_days)
 
     data = fetch_historical_data(symbol, timeframe, start_date, end_date)
     if data is None or data.empty:
@@ -138,12 +145,11 @@ def fetch_and_display_chart(root):
         return
 
     # Predict the future prices using LSTM
-    future_days = 40
     lstm_predictions = predict_future_prices(lstm_model, scaled_data, scaler, future_days)
     lstm_predictions = lstm_predictions.flatten()
 
-    # Pause for 30 seconds
-    time.sleep(30)
+    # Pause for 5 seconds (reduced from 30 for efficiency)
+    time.sleep(5)
 
     # Prepare data for GARCH model
     historical_prices = pd.Series(data['close'].values, index=data['time'])
@@ -182,6 +188,9 @@ def fetch_historical_data(symbol, timeframe, start_date, end_date):
     return df[['time', 'close']]
 
 def preprocess_data(data):
+    if len(data) < 61:  # Minimum data length required (window_size + 1)
+        print("Not enough data to preprocess")
+        return None, None
     scaler = MinMaxScaler(feature_range=(0, 1))
     data = data.reshape(-1, 1)
     scaled_data = scaler.fit_transform(data)
@@ -190,6 +199,12 @@ def preprocess_data(data):
 def train_lstm_model(scaled_data):
     window_size = 60
     X_train, y_train = create_train_data(scaled_data, window_size)
+    if X_train.size == 0 or y_train.size == 0:
+        print("Not enough training data")
+        return None
+
+    # Debugging: Print shapes
+    print(f"X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -209,6 +224,9 @@ def train_lstm_model(scaled_data):
         loss.backward()
         optimizer.step()
 
+        # Debugging: Print loss
+        print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.6f}")
+
     return model
 
 class LSTMModel(nn.Module):
@@ -223,15 +241,20 @@ class LSTMModel(nn.Module):
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
+        # Set initial hidden and cell states
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
 
+        # Forward propagate LSTM
         out, _ = self.lstm(x, (h0, c0))
+        # Decode the hidden state of the last time step
         out = self.fc(out[:, -1, :])
         return out
 
 def create_train_data(scaled_data, window_size):
     X_train, y_train = [], []
+    if len(scaled_data) < window_size:  # Changed from <= to <
+        return np.array(X_train), np.array(y_train)
     for i in range(window_size, len(scaled_data)):
         X_train.append(scaled_data[i - window_size:i, 0])
         y_train.append(scaled_data[i, 0])
@@ -247,15 +270,21 @@ def predict_future_prices(model, data, scaler, future_days):
     input_seq = data[-window_size:]
 
     input_seq = torch.FloatTensor(input_seq).to(device)
-    input_seq = input_seq.unsqueeze(0)
+    input_seq = input_seq.unsqueeze(0)  # Shape: (1, 60, 1)
 
     for _ in range(future_days):
         with torch.no_grad():
-            pred = model(input_seq)
+            pred = model(input_seq)  # Shape: (1, 1)
         predictions.append(pred.item())
-        new_input = pred.unsqueeze(0).unsqueeze(0)
-        input_seq = torch.cat((input_seq[:, 1:, :], new_input), dim=1)
+        new_input = pred.unsqueeze(2)  # Corrected line: Shape becomes (1, 1, 1)
 
+        # Debugging: Print shapes
+        # print(f"input_seq shape before slicing: {input_seq.shape}")
+        # print(f"input_seq[:, 1:, :].shape: {input_seq[:, 1:, :].shape}")
+        # print(f"new_input shape: {new_input.shape}")
+
+        input_seq = torch.cat((input_seq[:, 1:, :], new_input), dim=1)
+        # print(f"input_seq shape after concatenation: {input_seq.shape}")
     predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
     return predictions
 
@@ -269,7 +298,8 @@ def fit_garch_model(returns):
         model = arch_model(returns, vol='Garch', p=1, q=1)
         model_fit = model.fit(disp='off')
         return model_fit
-    except:
+    except Exception as e:
+        print(f"GARCH model fitting failed: {e}")
         return None
 
 def forecast_volatility(model_fit, horizon):
@@ -278,6 +308,11 @@ def forecast_volatility(model_fit, horizon):
     return volatility
 
 def combine_predictions(lstm_preds, garch_volatility):
+    # Ensure the lengths match
+    min_length = min(len(lstm_preds), len(garch_volatility))
+    lstm_preds = lstm_preds[:min_length]
+    garch_volatility = garch_volatility[:min_length]
+
     # Adjust LSTM predictions using GARCH volatility
     combined_preds = lstm_preds * (1 + garch_volatility)
     return combined_preds
@@ -307,3 +342,5 @@ def plot_predictions(data, predicted_df, root):
 
 if __name__ == "__main__":
     main()
+
+
