@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 import MetaTrader5 as mt5
 import pandas as pd
+import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -69,9 +70,12 @@ def backtest_strategy():
 
     # Generate signals
     df['signal'] = 0
-    df['signal'][20:] = np.where(df['ema20'][20:] > df['ema50'][20:], 1, -1)
+    df['signal'] = np.where(df['ema20'] > df['ema50'], 1, -1)
     df['position'] = df['signal'].shift(1)
     df['position'].fillna(0, inplace=True)
+
+    # Debugging: Print the last few rows to check signals
+    logging.debug(df[['time', 'close', 'ema20', 'ema50', 'signal', 'position']].tail(10))
 
     # Calculate returns
     df['returns'] = df['close'].pct_change()
@@ -99,20 +103,21 @@ def backtest_strategy():
     # Plotting the strategy
     fig, ax = plt.subplots(figsize=(14, 7))
 
-    ax.plot(df['time'], df['cumulative_returns'], label='Buy and Hold', color='blue')
-    ax.plot(df['time'], df['cumulative_strategy'], label='EMA Strategy', color='orange')
+    ax.plot(df['time'], df['close'], label='BTCUSD', color='blue')
+    ax.plot(df['time'], df['ema20'], label='EMA20', color='green')
+    ax.plot(df['time'], df['ema50'], label='EMA50', color='red')
 
-    # Plot buy signals
-    buy_signals = df[(df['signal'] == 1) & (df['position'] == 0)]
-    ax.scatter(buy_signals['time'], df['cumulative_strategy'][buy_signals.index], marker='^', color='green', label='Buy Signal', s=100)
+    # Plot buy signals (when signal changes to 1)
+    buy_signals = df[df['signal'] == 1]
+    ax.scatter(buy_signals['time'], buy_signals['close'], marker='^', color='green', label='Buy Signal', s=100)
 
-    # Plot sell signals
-    sell_signals = df[(df['signal'] == -1) & (df['position'] == 1)]
-    ax.scatter(sell_signals['time'], df['cumulative_strategy'][sell_signals.index], marker='v', color='red', label='Sell Signal', s=100)
+    # Plot sell signals (when signal changes to -1)
+    sell_signals = df[df['signal'] == -1]
+    ax.scatter(sell_signals['time'], sell_signals['close'], marker='v', color='red', label='Sell Signal', s=100)
 
     ax.set_title(f"EMA Strategy Backtest for {symbol}", fontsize=16)
     ax.set_xlabel("Date", fontsize=14)
-    ax.set_ylabel("Cumulative Returns", fontsize=14)
+    ax.set_ylabel("Price", fontsize=14)
     ax.legend()
     ax.grid(True)
 
@@ -176,7 +181,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        import numpy as np  # Import here to avoid issues if not already imported
         main()
     except Exception as e:
         logging.exception("An unexpected error occurred:")
