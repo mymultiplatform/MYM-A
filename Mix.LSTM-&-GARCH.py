@@ -10,7 +10,7 @@ from sklearn.preprocessing import MinMaxScaler
 import torch
 import torch.nn as nn
 from datetime import datetime, timedelta
-import time
+import threading
 from arch import arch_model
 
 def main():
@@ -54,9 +54,9 @@ def main():
         login_frame,
         text="Connect",
         font=("Helvetica", 14),
-        command=lambda: connect_to_mt5(
+        command=lambda: threading.Thread(target=connect_to_mt5, args=(
             login_entry.get(), password_entry.get(), server_entry.get(), root
-        ),
+        )).start()
     )
     connect_button.pack(pady=20)
 
@@ -79,7 +79,6 @@ def connect_to_mt5(login, password, server, root):
     # Initialize MetaTrader 5
     if not mt5.initialize():
         messagebox.showerror("Error", "initialize() failed")
-        mt5.shutdown()
         return
 
     # Log in to the MetaTrader 5 account
@@ -88,8 +87,10 @@ def connect_to_mt5(login, password, server, root):
         print("Connected to MetaTrader 5")
         display_account_info(root)
         fetch_and_display_chart(root)
+        mt5.shutdown()  # Shutdown after fetching data
     else:
         messagebox.showerror("Error", "Failed to connect to MetaTrader 5")
+        mt5.shutdown()
 
 def display_account_info(root):
     # Get account info
@@ -123,7 +124,7 @@ def fetch_and_display_chart(root):
 
     # Dates for historical data
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=365)  # Increased to 365 days
+    start_date = end_date - timedelta(days=365)
     prediction_start_date = end_date
     future_days = 40  # Predict 40 days into the future
     prediction_end_date = end_date + timedelta(days=future_days)
@@ -148,9 +149,6 @@ def fetch_and_display_chart(root):
     lstm_predictions = predict_future_prices(lstm_model, scaled_data, scaler, future_days)
     lstm_predictions = lstm_predictions.flatten()
 
-    # Pause for 5 seconds (reduced from 30 for efficiency)
-    time.sleep(5)
-
     # Prepare data for GARCH model
     historical_prices = pd.Series(data['close'].values, index=data['time'])
     returns = calculate_returns(historical_prices)
@@ -171,7 +169,7 @@ def fetch_and_display_chart(root):
     prediction_dates = pd.date_range(start=prediction_start_date + timedelta(days=1), periods=future_days)
 
     # Create DataFrame for predictions
-    predicted_df = pd.DataFrame({'time': prediction_dates, 'close': combined_predictions})
+    predicted_df = pd.DataFrame({'time': prediction_dates, 'close': combined_predictions.flatten()})
 
     # Plot and display the chart with combined predictions
     plot_predictions(data, predicted_df, root)
@@ -253,7 +251,7 @@ class LSTMModel(nn.Module):
 
 def create_train_data(scaled_data, window_size):
     X_train, y_train = [], []
-    if len(scaled_data) < window_size:  # Changed from <= to <
+    if len(scaled_data) < window_size:
         return np.array(X_train), np.array(y_train)
     for i in range(window_size, len(scaled_data)):
         X_train.append(scaled_data[i - window_size:i, 0])
@@ -276,21 +274,16 @@ def predict_future_prices(model, data, scaler, future_days):
         with torch.no_grad():
             pred = model(input_seq)  # Shape: (1, 1)
         predictions.append(pred.item())
-        new_input = pred.unsqueeze(2)  # Corrected line: Shape becomes (1, 1, 1)
+        new_input = pred.unsqueeze(2)  # Corrected shape to (1, 1, 1)
 
-        # Debugging: Print shapes
-        # print(f"input_seq shape before slicing: {input_seq.shape}")
-        # print(f"input_seq[:, 1:, :].shape: {input_seq[:, 1:, :].shape}")
-        # print(f"new_input shape: {new_input.shape}")
-
+        # Concatenate along the sequence dimension
         input_seq = torch.cat((input_seq[:, 1:, :], new_input), dim=1)
-        # print(f"input_seq shape after concatenation: {input_seq.shape}")
     predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
     return predictions
 
 def calculate_returns(prices):
     returns = np.log(prices / prices.shift(1))
-    returns = returns.dropna()
+    returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
     return returns
 
 def fit_garch_model(returns):
@@ -313,34 +306,43 @@ def combine_predictions(lstm_preds, garch_volatility):
     lstm_preds = lstm_preds[:min_length]
     garch_volatility = garch_volatility[:min_length]
 
+    # Adjust shapes
+    lstm_preds = lstm_preds.reshape(-1, 1)
+    garch_volatility = garch_volatility.reshape(-1, 1)
+
     # Adjust LSTM predictions using GARCH volatility
     combined_preds = lstm_preds * (1 + garch_volatility)
     return combined_preds
 
 def plot_predictions(data, predicted_df, root):
-    combined_df = pd.concat([data, predicted_df])
+    # Clear previous frames if any (ensure this is thread-safe)
+    def update_gui():
+        for widget in root.winfo_children():
+            widget.destroy()
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(data['time'], data['close'], label="Historical BTC/USD")
-    ax.plot(predicted_df['time'], predicted_df['close'], 'r--', label="Predicted BTC/USD")
+        # Recreate frames
+        chart_frame = tk.Frame(root)
+        chart_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-    # Peaks in historical data
-    peaks, _ = find_peaks(data['close'])
-    ax.plot(data['time'].iloc[peaks], data['close'].iloc[peaks], "ro", markersize=5)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(data['time'], data['close'], label="Historical BTC/USD")
+        ax.plot(predicted_df['time'], predicted_df['close'], 'r--', label="Predicted BTC/USD")
 
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Price")
-    ax.set_title("BTC/USD Daily Chart with Combined LSTM and GARCH Predictions")
-    ax.legend()
+        # Peaks in historical data
+        peaks, _ = find_peaks(data['close'])
+        ax.plot(data['time'].iloc[peaks], data['close'].iloc[peaks], "ro", markersize=5)
 
-    chart_frame = tk.Frame(root)
-    chart_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Price")
+        ax.set_title("BTC/USD Daily Chart with Combined LSTM and GARCH Predictions")
+        ax.legend()
 
-    canvas = FigureCanvasTkAgg(fig, master=chart_frame)
-    canvas.draw()
-    canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+    # Schedule the GUI update in the main thread
+    root.after(0, update_gui)
 
 if __name__ == "__main__":
     main()
-
-
