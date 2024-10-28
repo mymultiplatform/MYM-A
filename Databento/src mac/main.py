@@ -19,7 +19,18 @@ from torch.utils.data import DataLoader        # For DataLoader
 import torch.nn as nn                          # For nn.MSELoss()
 import torch.optim as optim                    # For optim.Adam()
 
+
 def main():
+
+        # Print initial resource usage
+    Config.print_resource_usage()
+    
+    # Optimize parameters based on current system load
+    Config.optimize_for_system()
+    
+    # Set PyTorch optimizations
+    torch.backends.cudnn.benchmark = Config.CUDNN_BENCHMARK
+    torch.set_num_threads(Config.NUM_WORKERS)
     # Set random seeds for reproducibility
     torch.manual_seed(Config.RANDOM_SEED)
     np.random.seed(Config.RANDOM_SEED)
@@ -95,28 +106,16 @@ def main():
     full_df = add_technical_features(full_df)
     
     print("Scaling data...")
-    # Convert to float32 before scaling
-    full_df = full_df.astype('float32')
-    
-    # Create train/test split masks
-    train_mask = (full_df.index >= Config.TRAIN_START_DATE) & (full_df.index <= Config.TRAIN_END_DATE)
-    train_df = full_df[train_mask]
-    test_df = full_df[~train_mask]
-    
-    # Initialize single scaler for all features
     data_scaler = MinMaxScaler()
+    full_df = full_df.astype('float32')
+    scaled_data = data_scaler.fit_transform(full_df.values)
     
-    # Fit scaler on training data only and transform all data
-    data_scaler.fit(train_df.values)
-    train_data = data_scaler.transform(train_df.values)
-    test_data = data_scaler.transform(test_df.values)
+    # Split data based on dates
+    train_mask = (full_df.index >= Config.TRAIN_START_DATE) & (full_df.index <= Config.TRAIN_END_DATE)
+    train_data = scaled_data[train_mask]
+    test_data = scaled_data[~train_mask]
     
-    # Combine scaled data in the correct order
-    scaled_data = np.vstack([train_data, test_data])
-    
-    print(f"Scaled data shape: {scaled_data.shape}")
-    
-    # Create train/validation split
+    # Create datasets
     train_size = int(Config.TRAIN_VAL_SPLIT * len(train_data))
     train_dataset = TimeSeriesDataset(train_data[:train_size], 
                                     Config.SEQUENCE_LENGTH, 
@@ -162,13 +161,15 @@ def main():
     train_model(model, train_loader, val_loader, criterion, optimizer, 
                 Config.EPOCHS, device, Config.PATIENCE)
     
+# [Previous code remains the same until the prediction generation part]
+
     print("Generating predictions...")
     model.load_state_dict(torch.load('best_model.pth'))
     model.eval()
     
     with torch.no_grad():
         last_sequence = scaled_data[-Config.SEQUENCE_LENGTH:].reshape(1, Config.SEQUENCE_LENGTH, -1)
-        last_sequence = torch.FloatTensor(last_sequence).to(device)  # Convert to tensor and move to device
+        last_sequence = torch.FloatTensor(last_sequence).to(device)
         predictions = model(last_sequence)
         predictions = predictions.cpu().numpy()
     
@@ -226,8 +227,31 @@ def main():
     print("Comparison data saved to price_comparison.csv")
     
     # Create and save the plot
+    # In your main.py, modify the create_price_plot call:
+    from datetime import timedelta
+
+# In your main.py, modify the data preparation section:
+
+    # Get all historical data for the matching window length
+    historical_start = last_timestamp - pd.Timedelta(minutes=Config.PREDICTION_LENGTH)
+    historical_prices = actual_data[
+        (actual_data['timestamp'] >= historical_start) &
+        (actual_data['timestamp'] <= last_timestamp)
+    ].copy()
+
+    # Create comparison DataFrame
+    comparison_df = pd.concat(
+        [historical_prices, predictions_df],
+        axis=0,
+        ignore_index=True
+    ).sort_values('timestamp').reset_index(drop=True)
+
+    # Add type column
+    comparison_df['type'] = 'predicted'
+    comparison_df.loc[comparison_df['timestamp'] <= last_timestamp, 'type'] = 'actual'
+
+    # Create the plot
     plot_path = create_price_plot(comparison_df, last_timestamp)
-    print(f"Price prediction plot saved to {plot_path}")
     
     # Calculate statistics
     actual_mask = comparison_df['type'] == 'actual'
