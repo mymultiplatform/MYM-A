@@ -18,6 +18,7 @@ from sklearn.preprocessing import MinMaxScaler  # For data_scaler
 from torch.utils.data import DataLoader        # For DataLoader
 import torch.nn as nn                          # For nn.MSELoss()
 import torch.optim as optim                    # For optim.Adam()
+
 def main():
     # Set random seeds for reproducibility
     torch.manual_seed(Config.RANDOM_SEED)
