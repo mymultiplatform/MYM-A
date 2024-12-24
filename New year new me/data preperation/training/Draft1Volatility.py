@@ -60,8 +60,7 @@ def setup_training_environment():
         return True
     return False
 
-# Call before training
-setup_training_environment()
+
 
 @dataclass
 class Config:
@@ -69,31 +68,23 @@ class Config:
         # Local path configurations
         self.BASE_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS'
         self.DATA_DIR = f'{self.BASE_DIR}\log'
-        self.BEST_PATH_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\Paths\12.23'
+        self.BEST_PATH_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\Paths\12.24'
         self.MODEL_PATH = f'{self.BEST_PATH_DIR}\\best_model.pth'
         self.log_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\log'
 
         # Data processing configurations
         self.CUTOFF_TIME = '2024-09-16T08:00:04.248723179Z'
-        self.BUFFER_FACTOR = 0.1
-
-
-        # Model configurations
+        # These directly affect the model training
         self.INPUT_SIZE = 2
         self.HIDDEN_SIZE = 64
         self.NUM_LAYERS = 2
         self.OUTPUT_SIZE = 1
-        # Data processing configurations
         self.SEQUENCE_LENGTH = 30
         self.CHUNK_SIZE = 100000
-
-        # Model configurations
         self.PIN_MEMORY = True
         self.PREFETCH_FACTOR = 4
-        # GPU configurations
-        self.CUDA_ALLOC_CONF = 'max_split_size_mb:1024,expandable_segments:True'
-        # In Config class
         self.BATCH_SIZE = 32768
+        self.CUDA_ALLOC_CONF = 'max_split_size_mb:1024,expandable_segments:True'
 
         # DataFrame dtype configurations
         self.DTYPE_DICT = {
@@ -118,8 +109,7 @@ class Config:
 
         }
 
-        # Processing configurations
-        self.N_EVENTS_ANALYSIS = 5
+
 
     def verify_paths(self):
         """Verify all necessary paths exist"""
@@ -199,7 +189,6 @@ def process_batch_gpu(batch_df: pd.DataFrame) -> Tuple[torch.Tensor, pd.Series]:
         return None, None
 # Increase workers based on CPU cores
 import multiprocessing
-MAX_WORKERS = max(multiprocessing.cpu_count() - 1, 1)  # Leave one core free
 
 
 
@@ -209,7 +198,7 @@ def process_csv_file(csv_file, config, device):
     df_chunks = pd.read_csv(
         csv_file,
         dtype=config.DTYPE_DICT,
-        parse_dates=['ts_recv', 'ts_event'],
+        parse_dates=['ts_event'],
         chunksize=1000000,  # 1 million rows per chunk
         low_memory=False,
         engine='c'
@@ -253,8 +242,9 @@ def load_data_from_csvs(config: Config) -> pd.DataFrame:
         print(f"GPU: {torch.cuda.get_device_name()}")
         print(f"Memory Available: {torch.cuda.get_device_properties(0).total_memory/1024**3:.1f}GB")
 
-    NUM_WORKERS = 20
-    Load_batch_size = 20
+    NUM_WORKERS = MAX_WORKERS = max(multiprocessing.cpu_count() - 1, 1)  # Leave one core free
+
+    Load_batch_size = 64
     
     csv_files = sorted(Path(config.log_DIR).glob('*.csv'))
     print(f"Found {len(csv_files)} CSV files to process")
@@ -338,97 +328,70 @@ class LSTMModel(nn.Module):
         return self.fc3(out)
 
 def prepare_training_sequences(df, cutoff_time, config, sequence_length=30, prediction_length=5):
-    """
-    Prepare sequences for training using only normalized_returns and n_delta
-    """
     print("Preparing sequences...")
     
-    # Convert cutoff time
     cutoff_time = pd.to_datetime(cutoff_time).tz_localize(None)
     ts_event = df['ts_event']
     if ts_event.dt.tz is not None:
         ts_event = ts_event.dt.tz_localize(None)
 
-    # Find cutoff index with progress bar
-    with tqdm(total=1, desc="Finding cutoff index") as pbar:
-        cutoff_idx = ts_event[ts_event > cutoff_time].index[0]
-        pbar.update(1)
+    cutoff_idx = ts_event[ts_event > cutoff_time].index[0]
+    
+    # Convert to float32 here
+    features = pd.DataFrame({
+        'normalized_returns': df['normalized_returns'].fillna(0).astype(np.float32),
+        'n_delta': df['n_delta'].astype(np.float32)
+    })
 
-    # Select only the two features we want
-    with tqdm(total=1, desc="Preparing features DataFrame") as pbar:
-        features = pd.DataFrame({
-            'normalized_returns': df['normalized_returns'].fillna(0),
-            'n_delta': df['n_delta']
-        })
-        pbar.update(1)
-
-    # Calculate total valid sequences and adjust sizes
     total_sequences = len(features) - sequence_length - prediction_length
     train_end = cutoff_idx - sequence_length - prediction_length
-    
-    # Ensure training size is a multiple of batch size
     train_size = (train_end // config.BATCH_SIZE) * config.BATCH_SIZE
     val_size = ((total_sequences - train_end) // config.BATCH_SIZE) * config.BATCH_SIZE
-    
-    print(f"\nSequence Generation Stats:")
-    print(f"Total sequences available: {total_sequences}")
-    print(f"Cutoff index: {cutoff_idx}")
-    print(f"Training end index: {train_end}")
-    print(f"Adjusted training size: {train_size}")
-    print(f"Adjusted validation size: {val_size}")
-    print(f"Batch size: {config.BATCH_SIZE}")
 
     def create_sequence_generator(start_idx, end_idx, is_training=True):
         def generator():
-            # Adjust end_idx to be a multiple of batch_size
             adjusted_end_idx = start_idx + ((end_idx - start_idx) // config.BATCH_SIZE) * config.BATCH_SIZE
             total_batches = (adjusted_end_idx - start_idx) // config.BATCH_SIZE
             
-            desc = "Generating training sequences" if is_training else "Generating validation sequences"
-            with tqdm(total=total_batches, desc=desc, unit="batch") as pbar:
-                for batch_start in range(start_idx, adjusted_end_idx, config.BATCH_SIZE):
-                    batch_end = min(batch_start + config.BATCH_SIZE, adjusted_end_idx)
-                    batch_size_actual = batch_end - batch_start
-
-                    # Skip if batch size is too small
-                    if batch_size_actual < config.BATCH_SIZE:
-                        continue
-
-                    X_batch = torch.zeros((batch_size_actual, sequence_length, 2),
-                                        dtype=torch.float32, device='cuda')
-                    y_batch = torch.zeros((batch_size_actual, prediction_length),
-                                        dtype=torch.float32, device='cuda')
-
-                    try:
-                        # Create input sequences
-                        for i in range(sequence_length):
-                            sequence_data = features.iloc[batch_start + i:batch_end + i].values
-                            X_batch[:, i] = torch.tensor(sequence_data, dtype=torch.float32, device='cuda')
-
-                        # Create target sequences
-                        for i in range(prediction_length):
-                            target_idx = batch_start + sequence_length + i
-                            y_batch[:, i] = torch.tensor(
-                                features['normalized_returns'].iloc[target_idx:target_idx + batch_size_actual].values,
-                                dtype=torch.float32, device='cuda'
-                            )
-
+            chunk_size = config.BATCH_SIZE * 10
+            desc = "Training sequences" if is_training else "Validation sequences"
+            
+            with tqdm(total=total_batches, desc=desc) as pbar:
+                for batch_start in range(start_idx, adjusted_end_idx, chunk_size):
+                    chunk_end = min(batch_start + chunk_size, adjusted_end_idx)
+                    
+                    chunk_features = features.iloc[batch_start:chunk_end + sequence_length].values
+                    chunk_returns = features['normalized_returns'].iloc[
+                        batch_start + sequence_length:chunk_end + sequence_length + prediction_length
+                    ].values
+                    
+                    for i in range(0, chunk_end - batch_start, config.BATCH_SIZE):
+                        if i + config.BATCH_SIZE > chunk_end - batch_start:
+                            break
+                            
+                        batch_features = chunk_features[i:i + config.BATCH_SIZE + sequence_length]
+                        X_batch = torch.tensor(
+                            np.stack([batch_features[j:j + sequence_length] for j in range(config.BATCH_SIZE)]),
+                            dtype=torch.float32,
+                            device='cuda'
+                        )
+                        
+                        batch_returns_reshaped = np.array([
+                            chunk_returns[i+j:i+j+prediction_length] 
+                            for j in range(config.BATCH_SIZE)
+                        ], dtype=np.float32)
+                        y_batch = torch.tensor(batch_returns_reshaped, dtype=torch.float32, device='cuda')
+                        
                         yield X_batch, y_batch
                         pbar.update(1)
-
-                    except Exception as e:
-                        print(f"Error in batch generation: {str(e)}")
-                        continue
-
-                    finally:
-                        # Clean up GPU memory
-                        torch.cuda.empty_cache()
+                        
+                        if i % (chunk_size//2) == 0:
+                            torch.cuda.empty_cache()
+                            
         return generator
 
-    # Return generators and sizes
     return (create_sequence_generator(0, train_size, True), train_size), \
            (create_sequence_generator(train_size, train_size + val_size, False), val_size)
-
 
 def weighted_mse_loss(pred, target):
     weights = torch.linspace(1.0, 0.5, pred.shape[1], device='cuda')  # Decreasing weights for future predictions
@@ -462,7 +425,7 @@ def train_model_with_dynamic_memory(train_data, val_data, model, config, train_s
     # Use CosineAnnealingLR
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=100,  # Number of epochs
+        T_max=50,  # Number of epochs
         eta_min=1e-6  # Minimum learning rate
     )
     
@@ -473,7 +436,7 @@ def train_model_with_dynamic_memory(train_data, val_data, model, config, train_s
     # Gradient accumulation steps
     accumulation_steps = 2
     
-    epochs_pbar = tqdm(range(100), desc="Training epochs", unit="epoch")
+    epochs_pbar = tqdm(range(50), desc="Training epochs", unit="epoch")
     for epoch in epochs_pbar:
         model.train()
         train_loss = 0
