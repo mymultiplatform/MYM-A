@@ -45,40 +45,59 @@ class Config:
             'rolling_mean_30_log_normalized': 'float32'
         }
 class GARCHLikeModel_New(torch.nn.Module):
-    def __init__(self, input_size=14, hidden_size=256, num_layers=2):  # Updated input_size
+    def __init__(self, config):
         super().__init__()
-        self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, 
-                                batch_first=True, bidirectional=True)
+        self.lstm = torch.nn.LSTM(
+            input_size=config.INPUT_SIZE,
+            hidden_size=config.HIDDEN_SIZE,
+            num_layers=config.NUM_LAYERS,
+            batch_first=True,
+            bidirectional=True
+        )
+        
         self.dropout = torch.nn.Dropout(0.2)
         self.mean_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_size * 2, 128),  # Increased intermediate layer size
+            torch.nn.Linear(config.HIDDEN_SIZE * 2, 128),
             torch.nn.ReLU(),
-            torch.nn.Linear(128, 1)
+            torch.nn.Linear(128, config.OUTPUT_SIZE)
         )
         self.variance_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_size * 2, 128),  # Increased intermediate layer size
+            torch.nn.Linear(config.HIDDEN_SIZE * 2, 128),
             torch.nn.ReLU(),
-            torch.nn.Linear(128, 1),
+            torch.nn.Linear(128, config.OUTPUT_SIZE),
             torch.nn.Softplus()
         )
 
     def forward(self, x):
+        # Process sequence through LSTM 
         lstm_out, _ = self.lstm(x)
+        
+        # Take the final hidden state
         last_hidden = lstm_out[:, -1]
+        
+        # Apply dropout for regularization
         features = self.dropout(last_hidden)
         
+        # Generate mean and variance predictions through separate heads
         mean = self.mean_head(features)
         variance = self.variance_head(features)
         
+        # Return both predictions for GARCH-like behavior
         return mean, variance
+
 class LSTMModel(torch.nn.Module):
-    def __init__(self, input_size=2, hidden_size=512, num_layers=6):
+    def __init__(self, config):
         super().__init__()
-        self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, 
-                                batch_first=True, bidirectional=True)
+        self.lstm = torch.nn.LSTM(
+            input_size=config.INPUT_SIZE,
+            hidden_size=config.HIDDEN_SIZE,
+            num_layers=config.NUM_LAYERS,
+            batch_first=True,
+            bidirectional=True
+        )
         self.dropout = torch.nn.Dropout(0.3)
-        self.fc1 = torch.nn.Linear(hidden_size * 2, hidden_size * 2)
-        self.fc2 = torch.nn.Linear(hidden_size * 2, 128)
+        self.fc1 = torch.nn.Linear(config.HIDDEN_SIZE * 2, config.HIDDEN_SIZE * 2)
+        self.fc2 = torch.nn.Linear(config.HIDDEN_SIZE * 2, 128)
         self.fc3 = torch.nn.Linear(128, 5)
         self.relu = torch.nn.ReLU()
 
@@ -116,18 +135,8 @@ def load_test_data(config):
     return filtered_data.sort_values('ts_event')
 
 
-def prepare_sequence(data, sequence_length=30):
-    feature_columns = [
-        'n_delta',
-        'log_normalized_returns',
-        'returns_squared_log_normalized',
-        'rolling_vol_5_log_normalized',
-        'rolling_vol_15_log_normalized',
-        'rolling_vol_30_log_normalized',
-        'rolling_mean_5_log_normalized',
-        'rolling_mean_15_log_normalized',
-        'rolling_mean_30_log_normalized'
-    ]
+def prepare_sequence(data, config):
+    feature_columns = list(config.DTYPE_DICT.keys())
     features = data[feature_columns].values
     return torch.tensor(features, dtype=torch.float32).unsqueeze(0)
 
@@ -135,25 +144,20 @@ def predict(model, sequences):
     model.eval()
     with torch.no_grad():
         return model(sequences).cpu().numpy()
-def rolling_forecast(model, data, window_size=30, horizon=5):
+def rolling_forecast(model, data, config):
     model.eval()
     forecasts = []
     
     with torch.no_grad():
-        for i in range(0, len(data) - window_size - horizon + 1):
-            # Get window of data
-            window = data[i:i+window_size]
-            
-            # Prepare sequence
-            sequence = prepare_sequence(window)
+        for i in range(0, len(data) - config.SEQUENCE_LENGTH - config.OUTPUT_SIZE + 1):
+            window = data[i:i+config.SEQUENCE_LENGTH]
+            sequence = prepare_sequence(window, config)
             sequence = sequence.cuda()
             
-            # Get predictions
             mean, variance = model(sequence)
             
-            # Store results
             forecasts.append({
-                'timestamp': data['ts_event'].iloc[i+window_size],
+                'timestamp': data['ts_event'].iloc[i+config.SEQUENCE_LENGTH],
                 'predicted_mean': mean.cpu().numpy()[0][0],
                 'predicted_variance': variance.cpu().numpy()[0][0]
             })
@@ -192,20 +196,12 @@ def main():
     config = Config()
     
     # Load old model first
-    old_model = LSTMModel(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        num_layers=config.NUM_LAYERS
-    )
+    old_model = LSTMModel(config)
     checkpoint = torch.load(config.MODEL_PATH, weights_only=True)    
     old_model.load_state_dict(checkpoint['model_state_dict'])
     
     # Initialize new model
-    new_model = GARCHLikeModel_New(
-        input_size=config.INPUT_SIZE,
-        hidden_size=config.HIDDEN_SIZE,
-        num_layers=config.NUM_LAYERS
-    )
+    new_model = GARCHLikeModel_New(config)
     
     # Transfer LSTM weights
     new_model.lstm.load_state_dict(old_model.lstm.state_dict())
@@ -213,15 +209,13 @@ def main():
     # Move to GPU
     new_model.cuda()
     
-    # Continue with your existing code...
     test_data = load_test_data(config)
     
-    # Generate rolling forecasts using new_model instead of model
+    # Generate rolling forecasts
     forecasts_df = rolling_forecast(
         model=new_model,
         data=test_data,
-        window_size=config.SEQUENCE_LENGTH,
-        horizon=5
+        config=config
     )
     
     # Calculate confidence intervals
@@ -237,4 +231,4 @@ def main():
     # Plot results with confidence intervals
     plot_results_with_intervals(forecasts_df)
 if __name__ == "__main__":
-   main()
+    main()
