@@ -78,16 +78,17 @@ def process_data_for_lstm(df: pd.DataFrame) -> pd.DataFrame:
     df['delta'] = pd.to_datetime(df['ts_event']).diff().dt.total_seconds()
     
     # Calculate rolling volatilities for different periods
-    windows = [5, 15, 30]  # 30 is already here for volatility
+    windows = [5, 15, 30]
     for window in windows:
         df[f'rolling_vol_{window}'] = df['returns'].rolling(window).std() * np.sqrt(252)
-        df[f'rolling_mean_{window}'] = df['returns'].rolling(window).mean()  # This now calculates mean for 30 too
-        # Log transform relevant columns
-        df['returns_squared'] = df['returns'] ** 2
+        df[f'rolling_mean_{window}'] = df['returns'].rolling(window).mean()
+        
+    # Log transform relevant columns
+    df['returns_squared'] = df['returns'] ** 2
         
     columns_to_log = ['delta', 'returns_squared'] + \
                     [f'rolling_vol_{w}' for w in windows] + \
-                    [f'rolling_mean_{w}' for w in [5, 15, 30]]  # Add 30 here
+                    [f'rolling_mean_{w}' for w in [5, 15, 30]]
     
     for col in columns_to_log:
         df[f'{col}_log'] = np.log1p(df[col].abs()) * np.sign(df[col])
@@ -96,6 +97,10 @@ def process_data_for_lstm(df: pd.DataFrame) -> pd.DataFrame:
     def normalize(series):
         return (series - series.mean()) / series.std()
     
+    # Initialize result DataFrame with ts_event
+    result_df = pd.DataFrame({'ts_event': df['ts_event']})
+    
+    # Add normalized columns
     final_columns = {
         'delta_log': 'n_delta',
         'returns': 'normalized_returns',
@@ -106,10 +111,9 @@ def process_data_for_lstm(df: pd.DataFrame) -> pd.DataFrame:
         'rolling_vol_30_log': 'rolling_vol_30_log_normalized',
         'rolling_mean_5_log': 'rolling_mean_5_log_normalized',
         'rolling_mean_15_log': 'rolling_mean_15_log_normalized',
-        'rolling_mean_30_log': 'rolling_mean_30_log_normalized'  # Add this line
+        'rolling_mean_30_log': 'rolling_mean_30_log_normalized'
     }
     
-    result_df = pd.DataFrame()
     for old_col, new_col in final_columns.items():
         if new_col == 'log_normalized_returns':
             # Special handling for logged normalized returns
