@@ -30,27 +30,39 @@ class Config:
         self.BATCH_SIZE = 8192   # Doubled for 12GB VRAM
         self.CUDA_ALLOC_CONF = 'max_split_size_mb:128,expandable_segments:True'  # Increased from 1024
         self.NUM_WORKERS = MAX_WORKERS = max(multiprocessing.cpu_count() - 1, 1)  # Leave one core free
+        self.INPUT_SIZE = 14  # Updated for all your columns except ts_event
         self.DTYPE_DICT = {
+            'n_delta': 'float32',
             'normalized_returns': 'float32',
-            'n_delta': 'float32'
+            'returns_squared': 'float32',
+            'rolling_vol_5': 'float32',
+            'rolling_vol_15': 'float32',
+            'rolling_vol_30': 'float32',
+            'rolling_mean_5': 'float32',
+            'rolling_mean_15': 'float32',
+            'returns_squared_log_normalized': 'float32',
+            'rolling_vol_5_log_normalized': 'float32',
+            'rolling_vol_15_log_normalized': 'float32',
+            'rolling_vol_30_log_normalized': 'float32',
+            'rolling_mean_5_log_normalized': 'float32',
+            'rolling_mean_15_log_normalized': 'float32'
         }
 class GARCHLikeModel_New(torch.nn.Module):
-    def __init__(self, input_size=2, hidden_size=256, num_layers=2):
+    def __init__(self, input_size=14, hidden_size=256, num_layers=2):  # Updated input_size
         super().__init__()
         self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, 
                                 batch_first=True, bidirectional=True)
         self.dropout = torch.nn.Dropout(0.2)
-        # Separate heads for mean and variance prediction
         self.mean_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_size * 2, 64),
+            torch.nn.Linear(hidden_size * 2, 128),  # Increased intermediate layer size
             torch.nn.ReLU(),
-            torch.nn.Linear(64, 1)
+            torch.nn.Linear(128, 1)
         )
         self.variance_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_size * 2, 64),
+            torch.nn.Linear(hidden_size * 2, 128),  # Increased intermediate layer size
             torch.nn.ReLU(),
-            torch.nn.Linear(64, 1),
-            torch.nn.Softplus()  # Ensures positive variance
+            torch.nn.Linear(128, 1),
+            torch.nn.Softplus()
         )
 
     def forward(self, x):
@@ -58,7 +70,6 @@ class GARCHLikeModel_New(torch.nn.Module):
         last_hidden = lstm_out[:, -1]
         features = self.dropout(last_hidden)
         
-        # Predict both mean and variance
         mean = self.mean_head(features)
         variance = self.variance_head(features)
         
@@ -86,21 +97,16 @@ def load_test_data(config):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # Process multiple files in parallel
     dfs = []
     files = sorted(Path(config.DATA_DIR).glob('*.csv'))
     
-    # Increase chunk size
-    chunksize = 5000000  # 5M rows per chunk
-    
-    # Use parallel processing
     with ThreadPoolExecutor(max_workers=4) as executor:
         for f in tqdm(files, desc="Processing CSV files"):
             df = pd.read_csv(
                 f,
                 dtype=config.DTYPE_DICT,
                 parse_dates=['ts_event'],
-                usecols=['ts_event', 'normalized_returns', 'n_delta'],
+                usecols=['ts_event'] + list(config.DTYPE_DICT.keys()),
                 low_memory=False,
                 engine='c'
             )
@@ -112,9 +118,8 @@ def load_test_data(config):
     
     return filtered_data.sort_values('ts_event')
 def prepare_sequence(data, sequence_length=30):
-    features = data[['normalized_returns', 'n_delta']].values
+    features = data[list(Config().DTYPE_DICT.keys())].values
     return torch.tensor(features, dtype=torch.float32).unsqueeze(0)
-
 def predict(model, sequences):
     model.eval()
     with torch.no_grad():
