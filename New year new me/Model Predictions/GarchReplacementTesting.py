@@ -13,39 +13,36 @@ import multiprocessing
 class Config:
     def __init__(self):
         self.BASE_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS'
-        self.DATA_DIR = f'{self.BASE_DIR}\log'
-        self.MODEL_PATH = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\Paths\12.24\best_model.pth'
-        self.TEST_START = pd.to_datetime('2024-09-16T08:00:04.248723179Z').tz_convert('UTC')        
+        self.DATA_DIR = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\data bento data\finaltest'  # Updated to match your processed data path
+        self.MODEL_PATH = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\Paths\12.31\best_model.pth'  # Updated to match your model path
+        self.TEST_START = pd.to_datetime('2024-09-16T08:00:04.248723179Z').tz_convert('UTC')
+        
         # Model configurations
-        self.INPUT_SIZE = 2
-        self.HIDDEN_SIZE = 256  # Added this from original LSTM config
+        self.INPUT_SIZE = 9  # Updated to match your 10 features
+        self.HIDDEN_SIZE = 256
         self.NUM_LAYERS = 2
         self.OUTPUT_SIZE = 1
         self.SEQUENCE_LENGTH = 30
         self.CHUNK_SIZE = 100000
         
-        # Performance optimizations for your hardware
+        # Performance optimizations
         self.PIN_MEMORY = True
-        self.PREFETCH_FACTOR = 2  # Increased from 4
-        self.BATCH_SIZE = 8192   # Doubled for 12GB VRAM
-        self.CUDA_ALLOC_CONF = 'max_split_size_mb:128,expandable_segments:True'  # Increased from 1024
-        self.NUM_WORKERS = MAX_WORKERS = max(multiprocessing.cpu_count() - 1, 1)  # Leave one core free
-        self.INPUT_SIZE = 14  # Updated for all your columns except ts_event
+        self.PREFETCH_FACTOR = 2
+        self.BATCH_SIZE = 4096
+        self.CUDA_ALLOC_CONF = 'max_split_size_mb:128,expandable_segments:True'
+        self.NUM_WORKERS = max(multiprocessing.cpu_count() - 1, 1)
+        
+        # Updated dtype dictionary to match your processed data
         self.DTYPE_DICT = {
             'n_delta': 'float32',
-            'normalized_returns': 'float32',
-            'returns_squared': 'float32',
-            'rolling_vol_5': 'float32',
-            'rolling_vol_15': 'float32',
-            'rolling_vol_30': 'float32',
-            'rolling_mean_5': 'float32',
-            'rolling_mean_15': 'float32',
+            'log_normalized_returns': 'float32',
             'returns_squared_log_normalized': 'float32',
             'rolling_vol_5_log_normalized': 'float32',
             'rolling_vol_15_log_normalized': 'float32',
             'rolling_vol_30_log_normalized': 'float32',
             'rolling_mean_5_log_normalized': 'float32',
-            'rolling_mean_15_log_normalized': 'float32'
+            'rolling_mean_15_log_normalized': 'float32',
+            'rolling_mean_30_log_normalized': 'float32'
         }
 class GARCHLikeModel_New(torch.nn.Module):
     def __init__(self, input_size=14, hidden_size=256, num_layers=2):  # Updated input_size
@@ -98,7 +95,7 @@ def load_test_data(config):
     print(f"Using device: {device}")
 
     dfs = []
-    files = sorted(Path(config.DATA_DIR).glob('*.csv'))
+    files = sorted(Path(config.DATA_DIR).glob('processed_*.csv'))  # Updated to match your processed file prefix
     
     with ThreadPoolExecutor(max_workers=4) as executor:
         for f in tqdm(files, desc="Processing CSV files"):
@@ -113,13 +110,27 @@ def load_test_data(config):
             dfs.append(df)
 
     final_data = pd.concat(dfs, ignore_index=True)
-    final_data['ts_event'] = pd.to_datetime(final_data['ts_event']).dt.tz_localize('UTC')
+    final_data['ts_event'] = pd.to_datetime(final_data['ts_event'])
     filtered_data = final_data[final_data['ts_event'] >= config.TEST_START]
     
     return filtered_data.sort_values('ts_event')
+
+
 def prepare_sequence(data, sequence_length=30):
-    features = data[list(Config().DTYPE_DICT.keys())].values
+    feature_columns = [
+        'n_delta',
+        'log_normalized_returns',
+        'returns_squared_log_normalized',
+        'rolling_vol_5_log_normalized',
+        'rolling_vol_15_log_normalized',
+        'rolling_vol_30_log_normalized',
+        'rolling_mean_5_log_normalized',
+        'rolling_mean_15_log_normalized',
+        'rolling_mean_30_log_normalized'
+    ]
+    features = data[feature_columns].values
     return torch.tensor(features, dtype=torch.float32).unsqueeze(0)
+
 def predict(model, sequences):
     model.eval()
     with torch.no_grad():
