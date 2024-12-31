@@ -7,6 +7,8 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import multiprocessing
+
 @dataclass
 class Config:
     def __init__(self):
@@ -14,11 +16,20 @@ class Config:
         self.DATA_DIR = f'{self.BASE_DIR}\log'
         self.MODEL_PATH = r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\Paths\12.24\best_model.pth'
         self.TEST_START = pd.to_datetime('2024-09-16T08:00:04.248723179Z').tz_convert('UTC')        
+        # Model configurations
         self.INPUT_SIZE = 2
-        self.HIDDEN_SIZE = 64
+        self.HIDDEN_SIZE = 256  # Added this from original LSTM config
         self.NUM_LAYERS = 2
-        self.OUTPUT_SIZE = 5  # Changed to match training model
+        self.OUTPUT_SIZE = 1
         self.SEQUENCE_LENGTH = 30
+        self.CHUNK_SIZE = 100000
+        
+        # Performance optimizations for your hardware
+        self.PIN_MEMORY = True
+        self.PREFETCH_FACTOR = 2  # Increased from 4
+        self.BATCH_SIZE = 8192   # Doubled for 12GB VRAM
+        self.CUDA_ALLOC_CONF = 'max_split_size_mb:128,expandable_segments:True'  # Increased from 1024
+        self.NUM_WORKERS = MAX_WORKERS = max(multiprocessing.cpu_count() - 1, 1)  # Leave one core free
         self.DTYPE_DICT = {
             'normalized_returns': 'float32',
             'n_delta': 'float32'
@@ -108,7 +119,7 @@ def plot_results(df):
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\returns_comparison_12_24_24.png')
+    plt.savefig(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\returns_comparison_12_24_24_2.png')
     plt.close()
 def main():
    config = Config()
@@ -153,7 +164,7 @@ def main():
            torch.cuda.empty_cache()
 
    df = pd.DataFrame(results)
-   df.to_csv(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\prediction_results_12_24_24.csv', index=False)
+   df.to_csv(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\prediction_results_12_24_24_2.csv', index=False)
    plot_results(df)
 if __name__ == "__main__":
    main()
