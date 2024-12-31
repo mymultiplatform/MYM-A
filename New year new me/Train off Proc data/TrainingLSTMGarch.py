@@ -79,7 +79,7 @@ class Config:
         # Rest of the config remains the same
         self.CUTOFF_TIME = '2024-09-16T08:00:04.248723179Z'
         
-        self.INPUT_SIZE = 10
+        self.INPUT_SIZE = 9
         self.HIDDEN_SIZE = 256
         self.NUM_LAYERS = 2
         self.OUTPUT_SIZE = 1
@@ -88,13 +88,12 @@ class Config:
         
         self.PIN_MEMORY = True
         self.PREFETCH_FACTOR = 2
-        self.BATCH_SIZE = 8192
+        self.BATCH_SIZE = 4096  
         self.CUDA_ALLOC_CONF = 'max_split_size_mb:128,expandable_segments:True'
         self.NUM_WORKERS = max(multiprocessing.cpu_count() - 1, 1)
         
         self.DTYPE_DICT = {
             'n_delta': 'float64',
-            'normalized_returns': 'float64',
             'log_normalized_returns': 'float64',
             'returns_squared_log_normalized': 'float64',
             'rolling_vol_5_log_normalized': 'float64',
@@ -102,8 +101,7 @@ class Config:
             'rolling_vol_30_log_normalized': 'float64',
             'rolling_mean_5_log_normalized': 'float64',
             'rolling_mean_15_log_normalized': 'float64',
-            'rolling_mean_30_log_normalized': 'float64',
-            'ts_event': 'datetime64[ns]'
+            'rolling_mean_30_log_normalized': 'float64'
         }
 
 
@@ -159,16 +157,38 @@ def process_csv_file(csv_file, config, device):
     chunks = []
     df_chunks = pd.read_csv(
         csv_file,
-        dtype=config.DTYPE_DICT,
-        chunksize=1000000,  # 1 million rows per chunk
+        dtype={
+            'n_delta': 'float64',
+            'log_normalized_returns': 'float64',
+            'returns_squared_log_normalized': 'float64',
+            'rolling_vol_5_log_normalized': 'float64',
+            'rolling_vol_15_log_normalized': 'float64',
+            'rolling_vol_30_log_normalized': 'float64',
+            'rolling_mean_5_log_normalized': 'float64',
+            'rolling_mean_15_log_normalized': 'float64',
+            'rolling_mean_30_log_normalized': 'float64'
+        },
+        parse_dates=['ts_event'],
+        chunksize=1000000,
         low_memory=False,
         engine='c'
     )
     
+    feature_columns = [
+        'n_delta',
+        'log_normalized_returns',
+        'returns_squared_log_normalized',
+        'rolling_vol_5_log_normalized',
+        'rolling_vol_15_log_normalized',
+        'rolling_vol_30_log_normalized',
+        'rolling_mean_5_log_normalized',
+        'rolling_mean_15_log_normalized',
+        'rolling_mean_30_log_normalized'
+    ]
+    
     for chunk in df_chunks:
         if len(chunk) > 0:
-            numeric_cols = chunk.select_dtypes(include=[np.number]).columns
-            numeric_data = chunk[numeric_cols].values
+            numeric_data = chunk[feature_columns].values
             
             with torch.cuda.stream(torch.cuda.Stream()):
                 cpu_tensor = torch.from_numpy(numeric_data).pin_memory()
@@ -179,7 +199,8 @@ def process_csv_file(csv_file, config, device):
                 gpu_tensor = (gpu_tensor - mean) / std
                 
                 processed_data = gpu_tensor.cpu().numpy()
-                processed_chunk = pd.DataFrame(processed_data, columns=numeric_cols)
+                processed_chunk = pd.DataFrame(processed_data, columns=feature_columns)
+                processed_chunk['ts_event'] = chunk['ts_event']
                 chunks.append(processed_chunk)
                 
                 del gpu_tensor, cpu_tensor
@@ -283,10 +304,9 @@ class LSTMModel(nn.Module):
 def prepare_training_sequences(df, config, sequence_length=30, prediction_length=5):
     print("Preparing sequences...")
     
-    # Select all features for training
     feature_columns = [
         'n_delta',
-        'log_normalized_returns',
+        'log_normalized_returns',  # This will be our target column instead of 'normalized_returns'
         'returns_squared_log_normalized',
         'rolling_vol_5_log_normalized',
         'rolling_vol_15_log_normalized',
@@ -299,16 +319,13 @@ def prepare_training_sequences(df, config, sequence_length=30, prediction_length
     features = df[feature_columns].astype(np.float32)
     features = features.fillna(0)
 
-    # Split data into train/val using simple ratio instead of timestamp
     total_sequences = len(features) - sequence_length - prediction_length
-    train_size = int(total_sequences * 0.8)  # 80% for training
+    train_size = int(total_sequences * 0.8)
     train_size = (train_size // config.BATCH_SIZE) * config.BATCH_SIZE
     val_size = ((total_sequences - train_size) // config.BATCH_SIZE) * config.BATCH_SIZE
 
     return (create_sequence_generator(0, train_size, features, True, config, sequence_length, prediction_length), train_size), \
            (create_sequence_generator(train_size, train_size + val_size, features, False, config, sequence_length, prediction_length), val_size)
-
-
 
 def create_sequence_generator(start_idx, end_idx, features, is_training=True, config=None, sequence_length=30, prediction_length=5):
     def generator():
@@ -325,8 +342,8 @@ def create_sequence_generator(start_idx, end_idx, features, is_training=True, co
                 # Get all features for the chunk
                 chunk_features = features.iloc[batch_start:chunk_end + sequence_length].values
                 
-                # Get target values (normalized_returns) for prediction
-                chunk_targets = features['normalized_returns'].iloc[
+                # Get target values (log_normalized_returns) for prediction
+                chunk_targets = features['log_normalized_returns'].iloc[  # Changed from normalized_returns
                     batch_start + sequence_length:chunk_end + sequence_length + prediction_length
                 ].values
                 
@@ -355,14 +372,10 @@ def create_sequence_generator(start_idx, end_idx, features, is_training=True, co
                     yield X_batch, y_batch
                     pbar.update(1)
                     
-                    # Memory management
                     if i % (chunk_size//4) == 0:
                         torch.cuda.empty_cache()
                         
     return generator
-    return (create_sequence_generator(0, train_size, features, True, config, sequence_length, prediction_length), train_size), \
-        (create_sequence_generator(train_size, train_size + val_size, features, False, config, sequence_length, prediction_length), val_size)
-
 def weighted_mse_loss(pred, target):
     weights = torch.linspace(1.0, 0.5, pred.shape[1], device='cuda')  # Decreasing weights for future predictions
     squared_diff = (pred - target) ** 2
@@ -396,7 +409,7 @@ def train_model_with_dynamic_memory(train_data, val_data, model, config, train_s
     # Use CosineAnnealingLR
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        T_max=10,  # Number of epochs
+        T_max=1,  # Number of epochs
         eta_min=1e-6  # Minimum learning rate
     )
     
@@ -407,7 +420,7 @@ def train_model_with_dynamic_memory(train_data, val_data, model, config, train_s
     # Gradient accumulation steps
     accumulation_steps = 8
     
-    epochs_pbar = tqdm(range(10), desc="Training epochs", unit="epoch")
+    epochs_pbar = tqdm(range(1), desc="Training epochs", unit="epoch")
     for epoch in epochs_pbar:
         model.train()
         train_loss = 0
