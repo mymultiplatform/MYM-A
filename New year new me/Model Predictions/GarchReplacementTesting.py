@@ -156,30 +156,57 @@ def rolling_forecast(model, data, config):
             
             mean, variance = model(sequence)
             
+            # Get actual value for the forecasted period
+            actual_value = data['log_normalized_returns'].iloc[i+config.SEQUENCE_LENGTH]
+            
+            # Calculate actual variance (using a rolling window)
+            actual_variance = data['returns_squared_log_normalized'].iloc[i+config.SEQUENCE_LENGTH]
+            
             forecasts.append({
                 'timestamp': data['ts_event'].iloc[i+config.SEQUENCE_LENGTH],
                 'predicted_mean': mean.cpu().numpy()[0][0],
-                'predicted_variance': variance.cpu().numpy()[0][0]
+                'actual_mean': actual_value,
+                'predicted_variance': variance.cpu().numpy()[0][0],
+                'actual_variance': actual_variance
             })
             
     return pd.DataFrame(forecasts)
 
-
+def analyze_errors(forecasts_df):
+    # Calculate basic error metrics
+    errors = {
+        'mean_error': (forecasts_df['actual_mean'] - forecasts_df['predicted_mean']).mean(),
+        'mean_absolute_error': abs(forecasts_df['actual_mean'] - forecasts_df['predicted_mean']).mean(),
+        'rmse': np.sqrt(((forecasts_df['actual_mean'] - forecasts_df['predicted_mean']) ** 2).mean()),
+        'variance_error': (forecasts_df['actual_variance'] - forecasts_df['predicted_variance']).mean(),
+        'bound_violations': ((forecasts_df['actual_mean'] > forecasts_df['predicted_upper_bound']) | 
+                           (forecasts_df['actual_mean'] < forecasts_df['predicted_lower_bound'])).mean()
+    }
+    
+    # Save error analysis
+    error_df = pd.DataFrame([errors])
+    error_df.to_csv(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\error_analysis.csv', index=False)
+    
+    return errors
 def plot_results_with_intervals(df):
     plt.figure(figsize=(15, 7))
     
-    # Plot mean prediction
+    # Plot predictions
     plt.plot(df['timestamp'], df['predicted_mean'], 
             label='Predicted Mean', color='blue')
     
-    # Plot confidence intervals
-    plt.fill_between(df['timestamp'], 
-                    df['lower_bound'], 
-                    df['upper_bound'],
-                    color='blue', alpha=0.2, 
-                    label='95% Confidence Interval')
+    # Plot actuals
+    plt.plot(df['timestamp'], df['actual_mean'],
+            label='Actual Mean', color='red')
     
-    plt.title('Returns Forecast with Volatility Intervals')
+    # Plot predicted confidence intervals
+    plt.fill_between(df['timestamp'], 
+                    df['predicted_lower_bound'], 
+                    df['predicted_upper_bound'],
+                    color='blue', alpha=0.2, 
+                    label='Predicted 95% CI')
+    
+    plt.title('Returns Forecast vs Actuals with Volatility Intervals')
     plt.xlabel('Time')
     plt.ylabel('Returns')
     plt.legend()
@@ -190,7 +217,7 @@ def plot_results_with_intervals(df):
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     
-    plt.savefig(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\garch_like_forecast.png')
+    plt.savefig(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\garch_like_forecast_with_actuals.png')
     plt.close()
 def main():
     config = Config()
@@ -218,17 +245,28 @@ def main():
         config=config
     )
     
-    # Calculate confidence intervals
-    forecasts_df['upper_bound'] = (forecasts_df['predicted_mean'] + 
-                                 1.96 * np.sqrt(forecasts_df['predicted_variance']))
-    forecasts_df['lower_bound'] = (forecasts_df['predicted_mean'] - 
-                                 1.96 * np.sqrt(forecasts_df['predicted_variance']))
+    # Calculate predicted bounds
+    forecasts_df['predicted_upper_bound'] = (forecasts_df['predicted_mean'] + 
+                                         1.96 * np.sqrt(forecasts_df['predicted_variance']))
+    forecasts_df['predicted_lower_bound'] = (forecasts_df['predicted_mean'] - 
+                                         1.96 * np.sqrt(forecasts_df['predicted_variance']))
     
-    # Save results
-    forecasts_df.to_csv(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\garch_like_forecasts.csv', 
+    # Calculate actual bounds
+    forecasts_df['actual_upper_bound'] = (forecasts_df['actual_mean'] + 
+                                      1.96 * np.sqrt(forecasts_df['actual_variance']))
+    forecasts_df['actual_lower_bound'] = (forecasts_df['actual_mean'] - 
+                                      1.96 * np.sqrt(forecasts_df['actual_variance']))
+    
+    # Save the enhanced results
+    forecasts_df.to_csv(r'C:\Users\cinco\Desktop\DATA FOR SCRIPTS\garch_like_forecasts_with_actuals.csv', 
                        index=False)
     
-    # Plot results with confidence intervals
+    # After creating forecasts_df and saving it:
+    errors = analyze_errors(forecasts_df)
+    print("Error Analysis Results:")
+    print(errors)
+    
     plot_results_with_intervals(forecasts_df)
+    
 if __name__ == "__main__":
     main()

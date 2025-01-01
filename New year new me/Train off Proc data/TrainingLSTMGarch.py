@@ -227,7 +227,6 @@ def load_data_from_csvs(config: Config) -> pd.DataFrame:
     print(f"Found {len(csv_files)} CSV files to process")
     print(f"Using {NUM_WORKERS} workers optimized for i9-12900K")
 
-    # Rest of the function remains the same...
 
     processed_dfs = []
     
