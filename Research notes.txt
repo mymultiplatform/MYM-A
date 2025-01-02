@@ -1,0 +1,34 @@
+Arch and Garch models are used to predict volatility,
+that is important because volatility helps us determine our
+error sizes for deep error analysis.
+
+Arch models do NOT have a beysian optimization process within,
+that is why Garch exists in order to provide "constantly updatijng aspect".
+
+Arch vs. Garch: 
+
+ARCH (Rolling Standard Deviation version):
+
+Uses equal weights
+Only uses past squared residuals
+Cuts off after a fixed number of days (like 22 days)
+
+GARCH:
+
+Uses declining weights that never reach zero
+Includes THREE components:
+
+Long run average variance
+Current period's predicted variance
+Most recent squared residual
+
+
+THESE WEIGHTS and parameters are optimal when they are below 1 and above 0 (so never negative or above 1)
+
+W(omega) = variance * weights (1-a-B)
+
+a(alpha) = Rounded STD
+
+B(beta) = Rounded Mean
+
+
