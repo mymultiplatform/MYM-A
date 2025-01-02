@@ -235,9 +235,7 @@ def prepare_and_forecast(csv_path):
         'rolling_forecasts': pd.Series(rolling_forecasts, index=return_dates)  # Use return_dates instead of training_data['Date']
     }
 
-# [All your previous code remains exactly the same until the last lines]
 
-# Usage
 #results = prepare_and_forecast('/Users/jazzhashzzz/Desktop/data for scripts/Yfinance Data/SPY_5y.csv')
 results = prepare_and_forecast(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\SPY_5y.csv")
 

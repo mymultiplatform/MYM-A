@@ -8,23 +8,39 @@ def calculate_returns(prices):
     """Calculate log returns from a numpy array of prices"""
     return np.log(prices[1:]/prices[:-1])
 
-def calculate_rolling_residuals(returns, window=22):
-    """Calculate rolling AR(1) residuals"""
-    from statsmodels.tsa.arima.model import ARIMA
+def calculate_ar1_residuals(returns, window=1008):
+    """
+    Calculate AR(1) residuals manually: r_t = μ + φ*r_{t-1} + ε_t
+    where ε_t is the residual we want to calculate
+    """
+    
     rolling_residuals = np.zeros_like(returns)
     
-    for i in range(window, len(returns)):
-        window_returns = returns[i-window:i]
-        try:
-            model = ARIMA(window_returns, order=(1,0,0))
-            results = model.fit()
-            # Store only the last residual
-            rolling_residuals[i] = results.resid[-1]
-        except:
-            rolling_residuals[i] = returns[i] - np.mean(window_returns)
+    for t in range(window, len(returns)):
+        # Get window of data
+        window_data = returns[t-window:t]
+        
+        # Lag the returns by 1 period
+        y = window_data[1:]  # r_t
+        X = window_data[:-1]  # r_{t-1}
+        
+        # Calculate φ using correlation
+        mean_X = np.mean(X)
+        mean_y = np.mean(y)
+        phi = np.sum((X - mean_X) * (y - mean_y)) / np.sum((X - mean_X)**2)
+        
+        # Calculate intercept (μ)
+        mu = mean_y - phi * mean_X
+        
+        # Calculate expected return for current period
+        expected_return = mu + phi * returns[t-1]
+        
+        # Calculate residual
+        rolling_residuals[t] = returns[t] - expected_return
     
-    # Fill first window periods with simple residuals
+    # Handle initial window period
     rolling_residuals[:window] = returns[:window] - np.mean(returns[:window])
+    
     return rolling_residuals
 
 def asymmetric_garch_variance(params, residuals):
@@ -111,11 +127,11 @@ def prepare_and_forecast(csv_path):
     
     df['Date'] = pd.to_datetime(df['Date'], utc=True).dt.tz_localize(None)
     
-    # Define periods
+    # Define periods - adjust these to use historical data instead of future dates
     training_start = pd.to_datetime('2020-01-02')
-    training_end = pd.to_datetime('2024-12-13')
-    forecast_start = pd.to_datetime('2024-12-16')
-    forecast_end = pd.to_datetime('2024-12-31')
+    training_end = pd.to_datetime('2024-12-13')     
+    forecast_start = pd.to_datetime('2024-12-16')   
+    forecast_end = pd.to_datetime('2024-12-31')     
     
     # Split data
     training_data = df[(df['Date'] >= training_start) & (df['Date'] <= training_end)]
@@ -125,63 +141,52 @@ def prepare_and_forecast(csv_path):
     training_returns = calculate_returns(training_data['Close'].values)
     
     # Initialize arrays for storing rolling results
-    # Initialize arrays for storing rolling results
-    window_size = 22
+    window_size = 1008
     n_training = len(training_returns)
     rolling_forecasts = np.zeros(n_training)
-    actual_rolling_vol = np.zeros(n_training)
     rolling_parameters = []
     
-    # Calculate actual rolling volatility first
-    for i in range(window_size, n_training):
-        # Calculate actual volatility using past window_size days
-        actual_rolling_vol[i] = np.std(training_returns[i-window_size:i])
-    
-    # Perform rolling window analysis and predictions
+    # In the rolling window analysis section:
     for i in range(window_size, n_training):
         window_returns = training_returns[i-window_size:i]
         
         try:
-            # Calculate AR(1) residuals for this window
-            window_residuals = calculate_rolling_residuals(window_returns)
-            
-            # Estimate GARCH parameters for this window
+            window_residuals = calculate_ar1_residuals(window_returns)
             omega, alpha, gamma, beta = estimate_asymmetric_garch_parameters(window_residuals)
             
-            # Store parameters
             rolling_parameters.append({
                 'date': training_data['Date'].iloc[i],
                 'omega': omega,
                 'alpha': alpha,
-                'gamma': gamma,
+                'gamma': gamma,  # Added gamma
                 'beta': beta,
-                'persistence': alpha + beta + gamma/2,
-                'long_run_var': omega/(1-alpha-beta-gamma/2),
-                'actual_volatility': actual_rolling_vol[i]
+                'persistence': alpha + beta + gamma/2,  # Updated persistence calculation
+                'long_run_var': omega/(1-alpha-beta-gamma/2)  # Updated long-run variance
             })
-            
-            # Calculate variance forecast for next period
+            # Calculate variance for this window
             h = asymmetric_garch_variance([omega, alpha, gamma, beta], window_residuals)
             rolling_forecasts[i] = np.sqrt(h[-1])
             
         except:
             # If estimation fails, use simple volatility
-            rolling_forecasts[i] = actual_rolling_vol[i]
+            rolling_forecasts[i] = np.std(window_returns)
+    
     # Get final window for forecasting
     final_window_returns = training_returns[-window_size:]
-    final_residuals = calculate_rolling_residuals(final_window_returns)
+    final_residuals = calculate_ar1_residuals(final_window_returns)
     final_omega, final_alpha, final_gamma, final_beta = estimate_asymmetric_garch_parameters(final_residuals)
     
     # Calculate final historical volatilities
     final_h = asymmetric_garch_variance([final_omega, final_alpha, final_gamma, final_beta], final_residuals)
     
-    # Generate forecasts
+    # Change back to 5 or 10 days for forecasting
+    n_forecast_days = 10  # or 10, depending on what you want
+
+    # Update forecast calls:
     forecast = forecast_asymmetric_volatility(final_residuals[-1], final_h[-1], 
-                                final_omega, final_alpha, final_gamma, final_beta, 10)
-    
-    # Create forecast dates
-    forecast_dates = pd.date_range(start=forecast_start, end=forecast_end, freq='B')[:10]
-    
+                                            final_omega, final_alpha, final_gamma, final_beta, n_forecast_days)
+    # Update forecast dates
+    forecast_dates = pd.date_range(start=forecast_start, end=forecast_end, freq='B')[:n_forecast_days]
     # Create results DataFrames
     forecast_results = pd.DataFrame({
         'Date': forecast_dates,
@@ -194,76 +199,74 @@ def prepare_and_forecast(csv_path):
     # Calculate actual volatility if available
     if len(actual_data) > 1:
         actual_returns = calculate_returns(actual_data['Close'].values)
-        actual_volatility = np.std(actual_returns)
-        forecast_results['Actual_Volatility'] = actual_volatility
-        forecast_results['Actual_Volatility_Percentage'] = actual_volatility * 100
-    
-        # Update plots to show rolling comparison
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 18))
-    
-    # Plot 1: Forecasted vs Actual Future Volatility
+        actual_volatilities = []
+        
+        # Calculate daily volatility as absolute returns
+        actual_volatilities = np.abs(actual_returns)
+        
+        forecast_results['Actual_Volatility'] = actual_volatilities
+        forecast_results['Actual_Volatility_Percentage'] = [v * 100 for v in actual_volatilities]
+    # Change from three subplots to two
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
+
+    # Plot 1: Keep the same as your current code
     ax1.plot(forecast_results['Date'], forecast_results['Forecasted_Volatility_Percentage'], 
-             label='Forecasted Volatility', marker='o')
+            label='Forecasted Volatility', marker='o')
     if 'Actual_Volatility' in forecast_results.columns:
         ax1.plot(forecast_results['Date'], forecast_results['Actual_Volatility_Percentage'], 
                 label='Actual Volatility', marker='x')
-    ax1.set_title('Future Volatility Forecast')
+    ax1.set_title('Asymmetric GARCH Volatility Forecast')
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Volatility (%)')
     ax1.legend()
     ax1.grid(True)
     ax1.tick_params(axis='x', rotation=45)
-    
-    # Plot 2: Rolling Parameters
+
+    # Plot 2: Include gamma in the rolling parameters plot
     ax2.plot(rolling_params_df['date'], rolling_params_df['alpha'], label='Alpha')
-    ax2.plot(rolling_params_df['date'], rolling_params_df['gamma'], label='Gamma')
+    ax2.plot(rolling_params_df['date'], rolling_params_df['gamma'], label='Gamma', linestyle='--')
     ax2.plot(rolling_params_df['date'], rolling_params_df['beta'], label='Beta')
     ax2.plot(rolling_params_df['date'], rolling_params_df['persistence'], label='Persistence')
-    ax2.set_title('Rolling GARCH Parameters')
+    ax2.set_title('Rolling Asymmetric GARCH Parameters')
     ax2.set_xlabel('Date')
     ax2.set_ylabel('Parameter Value')
     ax2.legend()
     ax2.grid(True)
     ax2.tick_params(axis='x', rotation=45)
     
-    # Plot 3: Rolling Volatility Comparison
-    ax3.plot(rolling_params_df['date'], rolling_forecasts[window_size:], 
-             label='Predicted Rolling Volatility', alpha=0.7)
-    ax3.plot(rolling_params_df['date'], rolling_params_df['actual_volatility'], 
-             label='Actual Rolling Volatility', alpha=0.7)
-    ax3.set_title('Rolling Volatility Comparison')
-    ax3.set_xlabel('Date')
-    ax3.set_ylabel('Volatility')
-    ax3.legend()
-    ax3.grid(True)
-    ax3.tick_params(axis='x', rotation=45)
-    
     plt.tight_layout()
     plt.savefig('garch_analysis.png')
-    
+        
     # Calculate performance metrics
-    forecast_error = rolling_forecasts[window_size:] - actual_rolling_vol[window_size:]
-    mse = np.mean(forecast_error**2)
-    rmse = np.sqrt(mse)
-    mae = np.mean(np.abs(forecast_error))
+    # First, we need to calculate actual rolling volatility
+    actual_rolling_vol = np.zeros(len(rolling_forecasts))
+    for i in range(window_size, len(training_returns)):
+        actual_rolling_vol[i] = np.std(training_returns[i-window_size:i])
     
-    print("\nRolling Volatility Forecast Performance:")
-    print(f"Mean Squared Error: {mse:.6f}")
-    print(f"Root Mean Squared Error: {rmse:.6f}")
-    print(f"Mean Absolute Error: {mae:.6f}")
+    # Now calculate forecast error metrics
+    forecast_error = rolling_forecasts[window_size:] - actual_rolling_vol[window_size:]
+    valid_indices = ~np.isnan(forecast_error)  # Remove any NaN values
+    forecast_error = forecast_error[valid_indices]
+    
+    # Calculate metrics only if we have valid data
+    if len(forecast_error) > 0:
+        mse = np.mean(forecast_error**2)
+        rmse = np.sqrt(mse)
+        mae = np.mean(np.abs(forecast_error))
+        
+        print("\nRolling Volatility Forecast Performance:")
+        print(f"Mean Squared Error: {mse:.6f}")
+        print(f"Root Mean Squared Error: {rmse:.6f}")
+        print(f"Mean Absolute Error: {mae:.6f}")
+    
+    # Create return_dates for the index
+    return_dates = training_data['Date'].iloc[1:].reset_index(drop=True)
     
     return {
         'forecasts': forecast_results,
         'rolling_parameters': rolling_params_df,
-        'rolling_forecasts': pd.Series(rolling_forecasts[window_size:], index=rolling_params_df['date']),
-        'actual_volatility': pd.Series(actual_rolling_vol[window_size:], index=rolling_params_df['date']),
-        'performance_metrics': {
-            'mse': mse,
-            'rmse': rmse,
-            'mae': mae
-        }
+        'rolling_forecasts': pd.Series(rolling_forecasts, index=return_dates)
     }
-
 # [All your previous code remains exactly the same until the last lines]
 def analyze_garch_implementation(df, training_returns, residuals, h_t, params, rolling_params_df):
     """
@@ -381,7 +384,7 @@ def run_garch_analysis(csv_path):
     # Calculate returns and get final window data
     training_returns = calculate_returns(training_data['Close'].values)
     final_window_returns = training_returns[-22:]  # Using your window_size of 22
-    final_residuals = calculate_rolling_residuals(final_window_returns)
+    final_residuals = calculate_ar1_residuals(final_window_returns)
     
     # Get final parameters and variance series
     final_params = estimate_asymmetric_garch_parameters(final_residuals)
@@ -400,7 +403,9 @@ def run_garch_analysis(csv_path):
     # Print results
     print("\nForecasting Results:")
     print(results['forecasts'].to_string())
+    results['forecasts'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\ASYMforecasts_SPY.csv", index=False)
     print("\nRolling Parameters:")
+    results['rolling_parameters'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\ASYMrolling_parameters_SPY.csv", index=False)
     print(results['rolling_parameters'].to_string())
     print("\nDetailed GARCH Analysis:")
     print(analysis)
