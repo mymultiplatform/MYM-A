@@ -424,3 +424,4 @@ def run_garch_analysis(csv_path):
 
 # Usage
 analysis_results = run_garch_analysis(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\SPY_5y.csv")
+#analysis_results = run_garch_analysis('/Users/jazzhashzzz/Desktop/data for scripts/Yfinance Data/SPY_5y.csv')
