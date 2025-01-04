@@ -49,21 +49,22 @@ def asymmetric_garch_variance(params, residuals):
     T = len(residuals)
     h = np.zeros(T)
     
-    # Initialize first variance using the unconditional variance
-    h[0] = np.var(residuals)
+    # Initialize with small positive number instead of zero
+    h[0] = max(np.var(residuals), 1e-6)  # Avoid zero
     log_h = np.log(h)
     
-    # Update using previous forecast and standardized residuals
     for t in range(1, T):
-        if residuals[t-1] != 0:  # Avoid division by zero
+        if h[t-1] > 0:  # Check for positive variance
             z_t = residuals[t-1] / np.sqrt(h[t-1])
         else:
             z_t = 0
             
-        # EGARCH specification
-        log_h[t] = omega + beta * log_h[t-1] + \
-                   alpha * (abs(z_t) - np.sqrt(2/np.pi)) + \
-                   gamma * z_t
+        # Add bounds check for numerical stability
+        log_h[t] = min(max(
+            omega + beta * log_h[t-1] + \
+            alpha * (abs(z_t) - np.sqrt(2/np.pi)) + \
+            gamma * z_t,
+            -20), 20)  # Prevent extreme values
         
         h[t] = np.exp(log_h[t])
     
@@ -123,35 +124,35 @@ def forecast_asymmetric_volatility(last_residual, last_variance, omega, alpha, g
         forecasts[t] = np.sqrt(current_h)
     
     return forecasts
-
 def prepare_and_forecast(csv_path):
-    # Read CSV
+    # Read CSV with copy
     df = pd.read_csv(csv_path,
                     usecols=['Date', 'Open', 'High', 'Low', 'Close', 
-                            'Volume', 'Dividends', 'Stock Splits', 'Capital Gains'])
+                            'Volume', 'Dividends', 'Stock Splits', 'Capital Gains']).copy()
     
     df['Date'] = pd.to_datetime(df['Date'], utc=True).dt.tz_localize(None)
     
-    # Define periods - adjust these to use historical data instead of future dates
+    # Define periods
     training_start = pd.to_datetime('2020-01-02')
     training_end = pd.to_datetime('2024-12-13')     
     forecast_start = pd.to_datetime('2024-12-16')   
     forecast_end = pd.to_datetime('2024-12-31')     
     
-    # Split data
-    training_data = df[(df['Date'] >= training_start) & (df['Date'] <= training_end)]
-    actual_data = df[(df['Date'] > training_end) & (df['Date'] <= forecast_end)]
+    # Split data 
+    training_data = df[(df['Date'] >= training_start) & (df['Date'] <= training_end)].copy()
+    actual_data = df[(df['Date'] > training_end) & (df['Date'] <= forecast_end)].copy()
     
-    # Calculate initial returns
+    # Calculate returns and adjust dates
     training_returns = calculate_returns(training_data['Close'].values)
+    training_dates = training_data['Date'].iloc[1:].reset_index(drop=True)
     
-    # Initialize arrays for storing rolling results
-    window_size = 1008
+    # Initialize arrays
+    window_size = 1008  # Keeping your original window size
     n_training = len(training_returns)
     rolling_forecasts = np.zeros(n_training)
     rolling_parameters = []
     
-    # In the rolling window analysis section:
+    # Rolling window analysis with proper indexing
     for i in range(window_size, n_training):
         window_returns = training_returns[i-window_size:i]
         
@@ -160,63 +161,54 @@ def prepare_and_forecast(csv_path):
             omega, alpha, gamma, beta = estimate_asymmetric_garch_parameters(window_residuals)
             
             rolling_parameters.append({
-                'date': training_data['Date'].iloc[i],
+                'date': training_dates[i],
                 'omega': omega,
                 'alpha': alpha,
-                'gamma': gamma,  # Added gamma
+                'gamma': gamma,
                 'beta': beta,
-                'persistence': alpha + beta + gamma/2,  # Updated persistence calculation
-                'long_run_var': omega/(1-alpha-beta-gamma/2)  # Updated long-run variance
+                'persistence': alpha + beta + gamma/2,
+                'long_run_var': omega/(1-alpha-beta-gamma/2)
             })
-            # Calculate variance for this window
             h = asymmetric_garch_variance([omega, alpha, gamma, beta], window_residuals)
             rolling_forecasts[i] = np.sqrt(h[-1])
             
-        except:
-            # If estimation fails, use simple volatility
+        except Exception as e:
+            print(f"Warning: Estimation failed at index {i}, using standard deviation. Error: {str(e)}")
             rolling_forecasts[i] = np.std(window_returns)
     
-    # Get final window for forecasting
+    # Final window forecasting
     final_window_returns = training_returns[-window_size:]
     final_residuals = calculate_ar1_residuals(final_window_returns)
     final_omega, final_alpha, final_gamma, final_beta = estimate_asymmetric_garch_parameters(final_residuals)
-    
-    # Calculate final historical volatilities
     final_h = asymmetric_garch_variance([final_omega, final_alpha, final_gamma, final_beta], final_residuals)
     
-    # Change back to 5 or 10 days for forecasting
-    n_forecast_days = 10  # or 10, depending on what you want
-
-    # Update forecast calls:
-    forecast = forecast_asymmetric_volatility(final_residuals[-1], final_h[-1], 
+    # Forecast next 10 days
+    n_forecast_days = 10
+    forecast = forecast_asymmetric_volatility(final_residuals[-1], final_h[-1],
                                             final_omega, final_alpha, final_gamma, final_beta, n_forecast_days)
-    # Update forecast dates
+    
+    # Create forecast results DataFrame
     forecast_dates = pd.date_range(start=forecast_start, end=forecast_end, freq='B')[:n_forecast_days]
-    # Create results DataFrames
     forecast_results = pd.DataFrame({
         'Date': forecast_dates,
         'Forecasted_Volatility': forecast,
         'Forecasted_Volatility_Percentage': forecast * 100
     })
     
-    rolling_params_df = pd.DataFrame(rolling_parameters)
-    
-    # Calculate actual volatility if available
+    # Handle actual volatility calculation with proper length checking
     if len(actual_data) > 1:
         actual_returns = calculate_returns(actual_data['Close'].values)
-        actual_volatilities = []
-        
-        # Calculate daily volatility as absolute returns
         actual_volatilities = np.abs(actual_returns)
-        
-        forecast_results['Actual_Volatility'] = actual_volatilities
-        forecast_results['Actual_Volatility_Percentage'] = [v * 100 for v in actual_volatilities]
-    # Change from three subplots to two
+        if len(actual_volatilities) == len(forecast_dates):
+            forecast_results['Actual_Volatility'] = actual_volatilities
+            forecast_results['Actual_Volatility_Percentage'] = actual_volatilities * 100
+    
+    # Create plots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
 
-    # Plot 1: Keep the same as your current code
+    # Volatility forecast plot
     ax1.plot(forecast_results['Date'], forecast_results['Forecasted_Volatility_Percentage'], 
-            label='Forecasted Volatility', marker='o')
+             label='Forecasted Volatility', marker='o')
     if 'Actual_Volatility' in forecast_results.columns:
         ax1.plot(forecast_results['Date'], forecast_results['Actual_Volatility_Percentage'], 
                 label='Actual Volatility', marker='x')
@@ -227,7 +219,8 @@ def prepare_and_forecast(csv_path):
     ax1.grid(True)
     ax1.tick_params(axis='x', rotation=45)
 
-    # Plot 2: Include gamma in the rolling parameters plot
+    # Rolling parameters plot
+    rolling_params_df = pd.DataFrame(rolling_parameters)
     ax2.plot(rolling_params_df['date'], rolling_params_df['alpha'], label='Alpha')
     ax2.plot(rolling_params_df['date'], rolling_params_df['gamma'], label='Gamma', linestyle='--')
     ax2.plot(rolling_params_df['date'], rolling_params_df['beta'], label='Beta')
@@ -241,19 +234,16 @@ def prepare_and_forecast(csv_path):
     
     plt.tight_layout()
     plt.savefig('garch_analysis.png')
-        
-    # Calculate performance metrics
-    # First, we need to calculate actual rolling volatility
+    
+    # Performance metrics
     actual_rolling_vol = np.zeros(len(rolling_forecasts))
     for i in range(window_size, len(training_returns)):
         actual_rolling_vol[i] = np.std(training_returns[i-window_size:i])
     
-    # Now calculate forecast error metrics
     forecast_error = rolling_forecasts[window_size:] - actual_rolling_vol[window_size:]
-    valid_indices = ~np.isnan(forecast_error)  # Remove any NaN values
+    valid_indices = ~np.isnan(forecast_error)
     forecast_error = forecast_error[valid_indices]
     
-    # Calculate metrics only if we have valid data
     if len(forecast_error) > 0:
         mse = np.mean(forecast_error**2)
         rmse = np.sqrt(mse)
@@ -263,16 +253,12 @@ def prepare_and_forecast(csv_path):
         print(f"Mean Squared Error: {mse:.6f}")
         print(f"Root Mean Squared Error: {rmse:.6f}")
         print(f"Mean Absolute Error: {mae:.6f}")
-    
-    # Create return_dates for the index
-    return_dates = training_data['Date'].iloc[1:].reset_index(drop=True)
-    
+
     return {
         'forecasts': forecast_results,
         'rolling_parameters': rolling_params_df,
-        'rolling_forecasts': pd.Series(rolling_forecasts, index=return_dates)
+        'rolling_forecasts': pd.Series(rolling_forecasts, index=training_dates)
     }
-# [All your previous code remains exactly the same until the last lines]
 def analyze_garch_implementation(df, training_returns, residuals, h_t, params, rolling_params_df):
     """
     Analyzes GARCH implementation with current data and parameters
@@ -406,7 +392,6 @@ def run_garch_analysis(csv_path):
     )
     
     # Print results
-    print("\nForecasting Results:")
     print(results['forecasts'].to_string())
     results['forecasts'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\AsymEgarchforecasts_SPY.csv", index=False)
     results['rolling_parameters'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\AsymEgarchrolling_parameters_SPY.csv", index=False)
