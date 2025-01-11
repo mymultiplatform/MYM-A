@@ -37,28 +37,7 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 from multiprocessing import freeze_support
 # GPU Optimization Settings
-def setup_training_environment():
-    if torch.cuda.is_available():
-        # Increase memory fraction
-        torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% of available memory
-        
-        # Enable TF32 for better performance
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        
-        # Set memory allocator settings
-        torch.cuda.memory.set_per_process_memory_fraction(0.95)
-        
-        # Set to faster backends
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.enabled = True
-        
-        # Clear cache
-        torch.cuda.empty_cache()
-        gc.collect()
-        
-        return True
-    return False
+
 
 
 
@@ -105,28 +84,7 @@ class Config:
         }
 
 
-    def verify_paths(self):
-        """Verify all necessary paths exist"""
-        paths = {
-            'DATA_DIR': Path(self.DATA_DIR),
-            'BEST_PATH_DIR': Path(self.BEST_PATH_DIR)
-        }
 
-        # Create best path directory if it doesn't exist
-        Path(self.BEST_PATH_DIR).mkdir(parents=True, exist_ok=True)
-
-        for name, path in paths.items():
-            if not path.exists():
-                raise FileNotFoundError(f"{name} not found: {path}")
-            print(f"✓ {name} verified: {path}")
-
-        # Verify CSV files exist
-        csv_files = list(paths['DATA_DIR'].glob('*.csv'))
-        if not csv_files:
-            raise FileNotFoundError(f"No CSV files found in {self.DATA_DIR}")
-        print(f"✓ Found {len(csv_files)} CSV files in data directory")
-
-        return True
 
 
 
@@ -264,12 +222,6 @@ def load_data_from_csvs(config: Config) -> pd.DataFrame:
         print(f"\nGPU Memory Used: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
     
     return final_df
-# Add this function to monitor GPU usage
-def print_gpu_utilization():
-    if torch.cuda.is_available():
-        print("\nCurrent GPU Utilization:")
-        print(f"Memory Allocated: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
-        print(f"Memory Cached: {torch.cuda.memory_reserved()/1024**3:.2f}GB")
 
 
 class LSTMModel(nn.Module):
@@ -375,17 +327,6 @@ def create_sequence_generator(start_idx, end_idx, features, is_training=True, co
                         torch.cuda.empty_cache()
                         
     return generator
-def weighted_mse_loss(pred, target):
-    weights = torch.linspace(1.0, 0.5, pred.shape[1], device='cuda')  # Decreasing weights for future predictions
-    squared_diff = (pred - target) ** 2
-    weighted_diff = squared_diff * weights
-    return weighted_diff.mean()
-def predict_future(model, sequence):
-    model.eval()
-    with torch.no_grad():
-        sequence_tensor = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).cuda()
-        predictions = model(sequence_tensor)
-        return predictions.cpu().numpy()
     
 def calculate_safe_batch_size(total_gpu_memory, memory_threshold=0.95):  # Increase from 0.9 to 0.95
     available_memory = total_gpu_memory * memory_threshold
@@ -540,7 +481,6 @@ if __name__ == '__main__':
     multiprocessing.freeze_support()
     
     try:
-        setup_training_environment()
         config = Config()
         
         print("\nLoading data...")
