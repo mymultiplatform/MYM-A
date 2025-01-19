@@ -393,8 +393,8 @@ def run_garch_analysis(csv_path):
     
     # Print results
     print(results['forecasts'].to_string())
-    results['forecasts'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\AsymEgarchforecasts_SPY.csv", index=False)
-    results['rolling_parameters'].to_csv(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\AsymEgarchrolling_parameters_SPY.csv", index=False)
+    results['forecasts'].to_csv("/Users/jazzhashzzz/Desktop/data for scripts/yfinance garch results/AsymEgarchforecasts_SPY.csv", index=False)
+    results['rolling_parameters'].to_csv("/Users/jazzhashzzz/Desktop/data for scripts/yfinance garch results/AsymEgarchrolling_parameters_SPY.csv", index=False)
     print(results['rolling_parameters'].to_string())
     print("\nDetailed GARCH Analysis:")
     print(analysis)
@@ -417,5 +417,5 @@ def run_garch_analysis(csv_path):
     }
 
 # Usage
-analysis_results = run_garch_analysis(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\SPY_5y.csv")
-#analysis_results = run_garch_analysis('/Users/jazzhashzzz/Desktop/data for scripts/Yfinance Data/SPY_5y.csv')
+#analysis_results = run_garch_analysis(r"C:\Users\cinco\Desktop\DATA FOR SCRIPTS\yfinance\SPY_5y.csv")
+analysis_results = run_garch_analysis('/Users/jazzhashzzz/Desktop/data for scripts/Yfinance Data/SPY_5y.csv')

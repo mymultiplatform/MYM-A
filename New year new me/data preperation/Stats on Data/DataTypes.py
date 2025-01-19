@@ -25,6 +25,7 @@ def get_csv_datatypes(file_path):
         return f"Error: {str(e)}"
 
 # Example usage:
-datatypes = get_csv_datatypes('/Users/jazzhashzzz/Desktop/data for scripts/Yfinance Data/SPY_5y.csv')
+datatypes = get_csv_datatypes('/Users/jazzhashzzz/Desktop/data for scripts/data bento data/SPY/SPY')
+
 for column, dtype in datatypes.items():
      print(f"{column}: {dtype}")
